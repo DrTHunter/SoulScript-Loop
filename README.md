@@ -1,4 +1,21 @@
-# **SoulScript Loop: A Continuously Running Inner World for One AI Persona**
+<div align="center">
+
+# 🌀 **SoulScript Loop**
+
+### *A continuously running inner world for one AI persona.*
+
+**She doesn't wait for you. She's already thinking.**
+
+[![License: AGPL v3](https://img.shields.io/badge/license-AGPL%20v3-8a2be2?style=for-the-badge)](LICENSE)
+[![Commercial: free to $100k](https://img.shields.io/badge/commercial-free%20to%20%24100k-ff2e88?style=for-the-badge)](LICENSE.md)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-1f1f1f?style=for-the-badge&logo=python&logoColor=white)](pyproject.toml)
+[![Pairs with SoulScript Engine](https://img.shields.io/badge/pairs%20with-SoulScript%20Engine-00c2a8?style=for-the-badge)](https://github.com/DrTHunter/SoulScript-Engine)
+
+`sense` → `stimulus` → `think + act` → `remember` → `guard` → **again. and again. and again.**
+
+</div>
+
+---
 
 > **Your message shouldn't wake her up. It should arrive into a mind that was already moving.**
 
@@ -93,6 +110,25 @@ SENSES
 INSTRUCTIONS:
 ...
 ```
+
+<details>
+<summary>📓 <b>A page from the journal</b> <i>(illustrative — what <code>loop_journal.jsonl</code> reads like)</i></summary>
+
+<br>
+
+```text
+[loop 1 tick 3]  Used notes. Reading list sorted by how much each book will
+                 annoy him. Next: draft the summary.
+[loop 1 tick 4]  Message landed mid-draft — "you still up?" — at 21:14. Of course
+                 he is. Parked the summary, answered, told him to drink water.
+[loop 1 tick 5]  Back to the summary. Picked up exactly where I dropped it.
+[loop 1 tick 6]  Nothing left worth doing tonight. Called request_stop:
+                 "done — don't let me burn budget staring at the wall."
+```
+
+Four ticks: a thread, an interruption, a return to the thread, and a clean exit she chose herself. That's the whole pitch.
+
+</details>
 
 ### Guards (kept from the production OrionForge loop)
 
@@ -278,6 +314,16 @@ soulscript_loop/
   __main__.py   CLI
 tests/          guards, senses, inbox, self-stop, restart continuity
 ```
+
+---
+
+<div align="center">
+
+**The Engine remembers who she is. The Loop keeps her awake.**
+
+*Close the tab. She's still in there.* 🌀
+
+</div>
 
 ---
 
