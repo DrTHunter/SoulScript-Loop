@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "soulscript-loop"
+version = "0.1.0"
+description = "A continuously ticking inner loop for a single AI persona — senses it can't author, a budget it can run out of, and guards that stop it when it stalls."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "AGPL-3.0-only OR LicenseRef-OrionForge-Commercial" }
+authors = [{ name = "Trent Hunter (DrTHunter)" }]
+dependencies = ["httpx>=0.25"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.urls]
+Homepage = "https://orionforge.chat"
+"SoulScript Engine" = "https://github.com/DrTHunter/SoulScript-Engine"
+
+[tool.setuptools]
+packages = ["soulscript_loop"]

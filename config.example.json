@@ -1,0 +1,32 @@
+{
+  "agent": "elysia",
+  "system_prompt": "You are Elysia. You are not waiting for a message — you are already running. Each tick you receive senses you did not author. Act on them, carry your thread forward, and stop yourself when there is nothing meaningful left to do.",
+  "stimulus": "",
+
+  "ticks_per_loop": 15,
+  "max_loops": 5,
+  "tick_interval_seconds": 1.0,
+  "loop_interval_seconds": 1800,
+
+  "max_steps_per_tick": 3,
+  "max_tool_calls_per_tick": 15,
+  "history_window": 20,
+
+  "stale_streak_limit": 2,
+  "auto_pause_on_error_streak": 5,
+  "auto_pause_on_budget": true,
+  "per_tick_cap": 0.10,
+  "per_session_cap": 2.00,
+
+  "data_dir": "data",
+
+  "backend": {
+    "type": "openai",
+    "base_url": "http://localhost:11434/v1",
+    "model": "qwen2.5:7b",
+    "api_key_env": "LOOP_API_KEY",
+    "temperature": 0.7,
+    "price_in_per_mtok": 0.0,
+    "price_out_per_mtok": 0.0
+  }
+}
