@@ -13,6 +13,7 @@ from .runner import LoopRunner
 from .senses import DEFAULT_SENSES, Sense
 from .state import LoopState
 from .tools import LoopControlTool, ToolRegistry
+from .workbench import Workbench
 
 __all__ = [
     "Backend",
@@ -26,6 +27,7 @@ __all__ = [
     "OpenAICompatibleBackend",
     "Sense",
     "ToolRegistry",
+    "Workbench",
 ]
 
 __version__ = "0.1.0"

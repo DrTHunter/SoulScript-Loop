@@ -19,6 +19,7 @@
   "per_session_cap": 2.00,
 
   "data_dir": "data",
+  "workbench": true,
 
   "backend": {
     "type": "openai",

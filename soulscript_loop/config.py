@@ -37,6 +37,7 @@ class LoopConfig:
 
     # ── Storage / backend ─────────────────────────────────────────
     data_dir: str = "data"
+    workbench: bool = True              # persistent scratch space at <data_dir>/workbench
     backend: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod

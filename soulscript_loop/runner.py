@@ -7,6 +7,7 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Awaitable, Callable, List, Optional, Union
 
 from .backend import Backend
@@ -14,6 +15,7 @@ from .config import LoopConfig
 from .senses import DEFAULT_INSTRUCTIONS, DEFAULT_SENSES, Sense, SenseContext, build_stimulus
 from .state import LoopState
 from .tools import LoopControlTool, ToolRegistry
+from .workbench import Workbench
 
 log = logging.getLogger(__name__)
 
@@ -94,7 +96,12 @@ class LoopRunner:
         self.state = state or LoopState(config.data_dir)
         self.tools = tools or ToolRegistry()
         LoopControlTool(self.state).register(self.tools)
-        self.senses = DEFAULT_SENSES if senses is None else senses
+        self.senses = list(DEFAULT_SENSES if senses is None else senses)
+        self.workbench: Optional[Workbench] = None
+        if config.workbench:
+            self.workbench = Workbench(Path(config.data_dir) / "workbench")
+            self.workbench.register(self.tools)
+            self.senses.append(self.workbench.sense)
         self.context_builder = context_builder or self._default_context
         self.instructions = instructions
         # Rebuild conversational continuity from what survived on disk.

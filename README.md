@@ -47,8 +47,9 @@ The full design has six parts:
 | 4 | **Identity anchoring** | Re-anchor the persona every tick from top-k FAISS retrieval over the soul script. | 🔌 **Hook provided**: plug in [SoulScript Engine](https://github.com/DrTHunter/SoulScript-Engine) via `context_builder` |
 | 5 | **Prediction-error loop** | She predicts, she's wrong, and the error becomes state she carries forward. A prediction made at 2pm is checked at 9pm. | 🧪 Roadmap (add as a sense + ledger tool) |
 | 6 | **The Room** | A spatial, text-native visual field. Objects have position, temperature, and mass. Mood is a heavy red object on the left that shifts while she isn't looking. Unresolved predictions pile up as clutter, and a capacity limit forces her to deal with them. | 🧪 Roadmap |
+| 7 | **The Workbench** | Her own persistent scratch space: files she builds across ticks, plus a reflection log (*what did I build, what worked, what didn't, what's next*). The plan she left herself shows up as a sense on every tick. | ✅ **Scratch space + reflection built**. Sandboxed code execution and self-made tools are 🧪 roadmap |
 
-The honest version: **1–3 run today, 4 is one function away, and 5–6 are the research.** Everything described as built is covered by tests.
+The honest version: **1–3 and the Workbench's scratch space run today, 4 is one function away, and 5–6 are the research.** Everything described as built is covered by tests.
 
 ### Why a loop and not turns?
 
@@ -232,6 +233,32 @@ runner = LoopRunner(config, backend, tools=tools)   # loop_control is added auto
 
 Handlers can be sync or async and return a string.
 
+### The Workbench
+
+Orion asked for somewhere to *build*. A mind that keeps running needs a place where its work is still there on the next tick. Every runner gets a `workbench` tool by default, rooted at `<data_dir>/workbench/`:
+
+| Action | Does |
+|--------|------|
+| `list` / `read` / `write` / `append` / `delete` | Work with her own files (e.g. `drafts/poem.md`, `tools/parser_sketch.py`) |
+| `reflect` | Log `built`, `worked`, `didnt`, `next` |
+| `reflections` | Read her recent reflections |
+
+The **workbench sense** lists what's on the bench and the `next` she wrote last time, so unfinished work pulls her back instead of being forgotten:
+
+```
+- workbench: 2 file(s)
+    - drafts/poem.md (412 bytes)
+    - tools/parser_sketch.py (1830 bytes)
+    you planned next: finish the parser's error handling
+```
+
+**Hard walls.** Every path is resolved and confined to the workbench root, so `../`, absolute paths and escape tricks are refused. Per-file and total size caps stop her filling your disk. The reflection log can only be written through `reflect`. Turn the whole thing off with `"workbench": false`.
+
+**Not yet, on purpose:**
+
+* 🧪 **Build environment.** Running the Python she writes. An unattended loop must never run arbitrary code on the host. This will ship only behind a real sandbox (a container with no network and CPU/memory/time limits), and off by default.
+* 🧪 **Tool creation.** Describe a tool, generate its schema, test it in the sandbox, then register it live. This depends on the build environment.
+
 ### Anchor identity with SoulScript Engine
 
 `context_builder(stimulus, history) -> messages` decides what the model sees each tick. Replace it to re-anchor the persona **every tick** from retrieval over the soul script:
@@ -270,7 +297,8 @@ The Engine keeps her stable. The Loop gives her continuity of state on top of th
 | `auto_pause_on_error_streak` | `5` | Consecutive errors before stop (`0` = off) |
 | `auto_pause_on_budget` | `true` | Enable the budget guards |
 | `per_tick_cap` / `per_session_cap` | `0.10` / `2.00` | USD caps |
-| `data_dir` | `"data"` | Where `loop_history.jsonl` and `loop_journal.jsonl` live |
+| `data_dir` | `"data"` | Where `loop_history.jsonl`, `loop_journal.jsonl` and `workbench/` live |
+| `workbench` | `true` | Give her the persistent workbench tool + sense |
 | `backend` | — | `type` (`openai` \| `echo`), `base_url`, `model`, `api_key_env`, `temperature`, `price_in_per_mtok`, `price_out_per_mtok` |
 
 Cost is estimated from reported token usage × your configured prices. Leave the prices at `0` for local models.
@@ -309,10 +337,11 @@ soulscript_loop/
   senses.py     sense channels + stimulus builder
   state.py      runtime state, JSONL persistence, inbox
   tools.py      tool registry + loop_control (self-inspect / pause / stop)
+  workbench.py  persistent scratch space, reflection log, workbench sense
   backend.py    OpenAI-compatible backend, offline echo backend
   config.py     LoopConfig
   __main__.py   CLI
-tests/          guards, senses, inbox, self-stop, restart continuity
+tests/          guards, senses, inbox, self-stop, restart continuity, workbench walls
 ```
 
 ---
