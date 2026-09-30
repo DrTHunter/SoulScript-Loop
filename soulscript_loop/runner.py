@@ -13,6 +13,7 @@ from typing import Awaitable, Callable, List, Optional, Union
 from .backend import Backend
 from .config import LoopConfig
 from .senses import DEFAULT_INSTRUCTIONS, DEFAULT_SENSES, Sense, SenseContext, build_stimulus
+from .sandbox import DockerSandbox, RunPythonTool, sandbox_from_config
 from .state import LoopState
 from .tools import LoopControlTool, ToolRegistry
 from .workbench import Workbench
@@ -102,6 +103,11 @@ class LoopRunner:
             self.workbench = Workbench(Path(config.data_dir) / "workbench")
             self.workbench.register(self.tools)
             self.senses.append(self.workbench.sense)
+        self.sandbox: Optional[DockerSandbox] = None
+        if self.workbench and config.sandbox.get("enabled"):
+            self.sandbox = sandbox_from_config(config.sandbox, self.workbench.root)
+            if self.sandbox:
+                RunPythonTool(self.sandbox).register(self.tools)
         self.context_builder = context_builder or self._default_context
         self.instructions = instructions
         # Rebuild conversational continuity from what survived on disk.

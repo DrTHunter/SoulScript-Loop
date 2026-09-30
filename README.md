@@ -47,7 +47,7 @@ The full design has six parts:
 | 4 | **Identity anchoring** | Re-anchor the persona every tick from top-k FAISS retrieval over the soul script. | 🔌 **Hook provided**: plug in [SoulScript Engine](https://github.com/DrTHunter/SoulScript-Engine) via `context_builder` |
 | 5 | **Prediction-error loop** | She predicts, she's wrong, and the error becomes state she carries forward. A prediction made at 2pm is checked at 9pm. | 🧪 Roadmap (add as a sense + ledger tool) |
 | 6 | **The Room** | A spatial, text-native visual field. Objects have position, temperature, and mass. Mood is a heavy red object on the left that shifts while she isn't looking. Unresolved predictions pile up as clutter, and a capacity limit forces her to deal with them. | 🧪 Roadmap |
-| 7 | **The Workbench** | Her own persistent scratch space: files she builds across ticks, plus a reflection log (*what did I build, what worked, what didn't, what's next*). The plan she left herself shows up as a sense on every tick. | ✅ **Scratch space + reflection built**. Sandboxed code execution and self-made tools are 🧪 roadmap |
+| 7 | **The Workbench** | Her own persistent scratch space: files she builds across ticks, plus a reflection log (*what did I build, what worked, what didn't, what's next*). The plan she left herself shows up as a sense on every tick. | ✅ **Scratch space, reflection, and sandboxed Python built** (sandbox is opt-in). Self-made tools are 🧪 roadmap |
 
 The honest version: **1–3 and the Workbench's scratch space run today, 4 is one function away, and 5–6 are the research.** Everything described as built is covered by tests.
 
@@ -254,10 +254,24 @@ The **workbench sense** lists what's on the bench and the `next` she wrote last 
 
 **Hard walls.** Every path is resolved and confined to the workbench root, so `../`, absolute paths and escape tricks are refused. Per-file and total size caps stop her filling your disk. The reflection log can only be written through `reflect`. Turn the whole thing off with `"workbench": false`.
 
-**Not yet, on purpose:**
+**Running what she writes (opt-in).** With `"sandbox": {"enabled": true}`, she gets a `run_python` tool that executes a `.py` file from her workbench **inside a Docker container**. It never runs on your machine directly, and if Docker isn't running the tool simply isn't offered. Every run is locked down:
 
-* 🧪 **Build environment.** Running the Python she writes. An unattended loop must never run arbitrary code on the host. This will ship only behind a real sandbox (a container with no network and CPU/memory/time limits), and off by default.
-* 🧪 **Tool creation.** Describe a tool, generate its schema, test it in the sandbox, then register it live. This depends on the build environment.
+| Wall | How |
+|------|-----|
+| No network | `--network none` |
+| Bounded | `--memory 256m`, `--cpus 0.5`, `--pids-limit 64`, 30 s wall-clock timeout, then the container is killed |
+| Can't touch the host | Read-only root filesystem. The **only** mount is her workbench at `/work` |
+| No privileges | Runs as `nobody`, `--cap-drop ALL`, `no-new-privileges` |
+
+```json
+"sandbox": { "enabled": true, "image": "python:3.12-slim", "timeout_seconds": 30, "memory": "256m", "cpus": "0.5" }
+```
+
+She writes `drafts/parser.py` with `workbench`, runs it with `run_python`, reads the traceback, fixes it, and runs it again. The results land back in her workbench.
+
+**Not yet:**
+
+* 🧪 **Tool creation.** Describe a tool, test it in the sandbox, and register it live so she can call it like any built-in. Designed, not shipped: a loop that grows its own capabilities while nobody is watching deserves its own review first.
 
 ### Anchor identity with SoulScript Engine
 
@@ -299,6 +313,7 @@ The Engine keeps her stable. The Loop gives her continuity of state on top of th
 | `per_tick_cap` / `per_session_cap` | `0.10` / `2.00` | USD caps |
 | `data_dir` | `"data"` | Where `loop_history.jsonl`, `loop_journal.jsonl` and `workbench/` live |
 | `workbench` | `true` | Give her the persistent workbench tool + sense |
+| `sandbox` | `{"enabled": false}` | Docker sandbox for `run_python`: `image`, `timeout_seconds`, `memory`, `cpus`, `pids_limit` |
 | `backend` | — | `type` (`openai` \| `echo`), `base_url`, `model`, `api_key_env`, `temperature`, `price_in_per_mtok`, `price_out_per_mtok` |
 
 Cost is estimated from reported token usage × your configured prices. Leave the prices at `0` for local models.
@@ -338,10 +353,11 @@ soulscript_loop/
   state.py      runtime state, JSONL persistence, inbox
   tools.py      tool registry + loop_control (self-inspect / pause / stop)
   workbench.py  persistent scratch space, reflection log, workbench sense
+  sandbox.py    Docker sandbox + run_python (opt-in, no host fallback)
   backend.py    OpenAI-compatible backend, offline echo backend
   config.py     LoopConfig
   __main__.py   CLI
-tests/          guards, senses, inbox, self-stop, restart continuity, workbench walls
+tests/          guards, senses, inbox, self-stop, restart continuity, workbench + sandbox walls
 ```
 
 ---
