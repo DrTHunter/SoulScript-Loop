@@ -6,6 +6,7 @@
 
 **She doesn't wait for you. She's already thinking.**
 
+[![tests](https://github.com/DrTHunter/SoulScript-Loop/actions/workflows/tests.yml/badge.svg)](https://github.com/DrTHunter/SoulScript-Loop/actions/workflows/tests.yml)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL%20v3-8a2be2?style=for-the-badge)](LICENSE)
 [![Commercial: free to $100k](https://img.shields.io/badge/commercial-free%20to%20%24100k-ff2e88?style=for-the-badge)](LICENSE.md)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-1f1f1f?style=for-the-badge&logo=python&logoColor=white)](pyproject.toml)
@@ -261,7 +262,7 @@ The **workbench sense** lists what's on the bench and the `next` she wrote last 
 | No network | `--network none` |
 | Bounded | `--memory 256m`, `--cpus 0.5`, `--pids-limit 64`, 30 s wall-clock timeout, then the container is killed |
 | Can't touch the host | Read-only root filesystem. The **only** mount is her workbench at `/work` |
-| No privileges | Runs as `nobody`, `--cap-drop ALL`, `no-new-privileges` |
+| No privileges | Runs as your own non-root uid on Linux/macOS (so the workbench stays writable) or `nobody` elsewhere, never root. `--cap-drop ALL`, `no-new-privileges` |
 
 ```json
 "sandbox": { "enabled": true, "image": "python:3.12-slim", "timeout_seconds": 30, "memory": "256m", "cpus": "0.5" }

@@ -6,7 +6,7 @@ is simply not offered. Every run gets:
   * no network (``--network none``)
   * CPU, memory, and process-count limits
   * a read-only root filesystem, all capabilities dropped, no privilege escalation
-  * an unprivileged user (nobody)
+  * an unprivileged user (your own uid on Linux/macOS, nobody otherwise; never root)
   * a wall-clock timeout, after which the container is killed
 
 The only mount is the workbench at ``/work`` (read-write, so code can
@@ -16,6 +16,7 @@ build on her files). Nothing else from the host is visible.
 import asyncio
 import json
 import logging
+import os
 import subprocess
 import uuid
 from pathlib import Path
@@ -58,6 +59,16 @@ class DockerSandbox:
         except (OSError, subprocess.TimeoutExpired):
             return False
 
+    @staticmethod
+    def container_user() -> str:
+        """Run as the host user so the workbench bind mount stays writable on Linux/macOS.
+
+        Never as root: a root host (or Windows, where there are no uids) gets nobody.
+        """
+        if hasattr(os, "getuid") and os.getuid() != 0:
+            return f"{os.getuid()}:{os.getgid()}"
+        return "65534:65534"
+
     def base_command(self, name: str) -> List[str]:
         return [
             self.docker, "run", "--rm", "-i",
@@ -71,7 +82,7 @@ class DockerSandbox:
             "--tmpfs", "/tmp:rw,size=64m",
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges",
-            "--user", "65534:65534",
+            "--user", self.container_user(),
             "--mount", f"type=bind,src={self.workdir},dst=/work",
             "--workdir", "/work",
             "--env", "PYTHONDONTWRITEBYTECODE=1",

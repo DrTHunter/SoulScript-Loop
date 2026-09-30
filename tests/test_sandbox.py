@@ -17,9 +17,11 @@ def test_container_is_locked_down(tmp_path):
     joined = " ".join(cmd)
     for flag in [
         "--network none", "--read-only", "--cap-drop ALL",
-        "--security-opt no-new-privileges", "--user 65534:65534", "--pids-limit 64",
+        "--security-opt no-new-privileges", "--pids-limit 64",
     ]:
         assert flag in joined
+    user = cmd[cmd.index("--user") + 1]
+    assert not user.startswith("0:")
     mounts = [cmd[i + 1] for i, a in enumerate(cmd) if a == "--mount"]
     assert mounts == [f"type=bind,src={tmp_path.resolve()},dst=/work"]
 
