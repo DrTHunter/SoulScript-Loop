@@ -47,6 +47,7 @@ class LoopConfig:
     data_dir: str = "data"
     workbench: bool = True
     sandbox: Dict[str, Any] = field(default_factory=lambda: {"enabled": False})
+    machine: Dict[str, Any] = field(default_factory=lambda: {"enabled": False})
     backend: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod

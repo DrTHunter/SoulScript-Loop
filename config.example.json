@@ -28,6 +28,7 @@
   "data_dir": "data",
   "workbench": true,
   "sandbox": { "enabled": false, "image": "python:3.12-slim", "timeout_seconds": 30, "memory": "256m", "cpus": "0.5" },
+  "machine": { "enabled": false, "url": "http://localhost:8080", "token_env": "LOOP_MACHINE_TOKEN" },
 
   "backend": {
     "type": "openai",

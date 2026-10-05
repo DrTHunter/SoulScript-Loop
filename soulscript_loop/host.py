@@ -13,6 +13,7 @@ from .backend import Backend, Completion, backend_from_config
 from .config import LoopConfig
 from .daemon import LoopDaemon
 from .embedding import Embedder, HashEmbedder, SentenceEmbedder
+from .machine import machine_from_config
 from .registry import ToolRegistry
 from .sandbox import RunPythonTool, sandbox_from_config
 
@@ -75,6 +76,9 @@ def build_loop(
         sandbox = sandbox_from_config(config.sandbox, Path(config.data_dir) / "workbench")
         if sandbox:
             RunPythonTool(sandbox).register(tools)
+    machine = machine_from_config(config.machine)
+    if machine:
+        machine.register(tools)
     host = StandaloneHost(config, backend or backend_from_config(config.backend), tools, identity, tasks)
     return LoopDaemon(host, config, Path(config.data_dir), embedder=embedder or make_embedder(config.embedder))
 

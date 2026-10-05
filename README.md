@@ -48,6 +48,7 @@ This **is** an attempt at the *experiential interface* for one specific characte
 | 6 | **Metacognitive guards** | She notices when she's repeating herself or circling, and gets made to rest if it continues. | ✅ Built |
 | 7 | **The workbench** | Her private making-space, next to perception but separate from it. Files, a reflection log, and an opt-in Docker sandbox. | ✅ Built |
 | 8 | **Identity anchoring** | Re-anchor the persona every tick using soul-script sections retrieved for *what she's currently seeing*. | 🔌 One function: plug in [SoulScript Engine](https://github.com/DrTHunter/SoulScript-Engine) via `identity=` |
+| 9 | **Her own machine** | A `linux` tool that runs commands on a real Linux box she can build on. The loop ships the tool and the contract, not the machine. | 🕳️ Bring your own Linux |
 
 Everything marked built is covered by tests.
 
@@ -286,6 +287,29 @@ tools.register(
 daemon = build_loop(config, tools=tools)
 ```
 
+### Give her a machine (bring your own Linux)
+
+The loop doesn't come with a machine. It comes with a **slot** for one. Turn on `machine` and she gets a `linux` tool that sends one bash command per call to any server that speaks this contract:
+
+```
+POST {url}/exec
+Authorization: Bearer <token>
+{"command": "bash command", "cwd": "", "timeout": 60}
+
+→ 200 {"exit": 0, "stdout": "...", "stderr": "...", "timed_out": false, "cwd": "/home/her"}
+```
+
+```json
+"machine": { "enabled": true, "url": "http://my-box:8080", "token_env": "LOOP_MACHINE_TOKEN" }
+```
+
+What goes behind that URL is up to you: a VM, a container, a Raspberry Pi, a cloud box. Whatever you choose, commands never run on the host that runs the loop. Build it like you're handing someone a shell, because you are:
+
+* Never give the endpoint a public address. Keep it on localhost, a private network, or behind a tunnel.
+* Run her as an unprivileged user, and decide on purpose whether she gets `sudo` and whether she gets the internet.
+* Don't let her commands read the token. Strip it from the environment of the shell you spawn.
+* Cap the time and output of each command, and log every command somewhere you can watch.
+
 ### Give her tasks
 
 ```python
@@ -349,6 +373,7 @@ The Engine keeps her stable. The Loop gives her continuity of perception on top 
 | `error_streak_limit` | `5` | Errors before stop |
 | `rumination_ticks` | `5` | Ticks on one focus without acting before her body notices |
 | `data_dir` / `workbench` | `"data"` / `true` | Storage; her making-space |
+| `machine` | `{"enabled": false}` | Her own Linux (bring your own): `url`, `token_env` (default `LOOP_MACHINE_TOKEN`) |
 | `sandbox` | `{"enabled": false}` | Docker sandbox for `run_python`: `image`, `timeout_seconds`, `memory`, `cpus`, `pids_limit` |
 | `backend` | — | `type` (`openai` \| `echo`), `base_url`, `model`, `api_key_env`, `temperature`, `price_in_per_mtok`, `price_out_per_mtok` |
 
@@ -385,13 +410,14 @@ soulscript_loop/
   tools.py       attend, reply, loop_control (+ workbench)
   workbench.py   her making-space and reflection log
   sandbox.py     Docker sandbox + run_python (opt-in, no host fallback)
+  machine.py     the linux tool: a slot for your own Linux box (opt-in)
   budget.py      daily energy
   host.py        StandaloneHost + build_loop
   backend.py     OpenAI-compatible and offline echo backends
   registry.py    your tools
   config.py      LoopConfig
   __main__.py    CLI: talk to her while she runs
-tests/           the field, prediction, capture, capacity, mood, guards, wake-on-message, workbench + sandbox walls
+tests/           the field, prediction, capture, capacity, mood, guards, wake-on-message, workbench + sandbox walls, the machine contract
 ```
 
 ---
