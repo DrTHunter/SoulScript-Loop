@@ -1,134 +1,217 @@
-"""Tool registry and the built-in loop_control tool."""
+"""Tools that exist only inside the loop: attention, replies, rest/stop, the bench."""
 
-import inspect
 import json
-import logging
-from typing import Any, Awaitable, Callable, Dict, List, Tuple, Union
+import time
+from typing import TYPE_CHECKING, Callable, Dict, List, Tuple
 
-from .state import LoopState
+from .prediction import EXPECTATION_CHANNELS
+from .world import CLOSE, TRACE, _clip, source_name
 
-log = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from .daemon import LoopDaemon
 
-ToolHandler = Callable[[dict], Union[str, Awaitable[str]]]
+
+ATTEND_DEF = {
+    "name": "attend",
+    "description": (
+        "Direct your focus. Your field arranges itself around whatever you focus on: the most related "
+        "things come close and clear, the rest drifts to the edge. Using any other tool to look at something "
+        "(memory, search, a file) also focuses you on what you saw. "
+        "Actions: 'focus' — on an item (item id), on a topic or thought (text), or on whatever is most "
+        "pressing from a source (source: door, bench, self); 'unfocus' — let your gaze wander; "
+        "'hold' (item) — keep it from fading (max 3); 'release' (item); "
+        "'resolve' (item) — mark it dealt with; its tension lifts; "
+        "'intend' (text) — set an intention you'll keep in view; "
+        "'expect' (text, channel door|bench, within_minutes) — make a prediction; you'll feel it met or broken; "
+        "'note' (text) — set a thought into your field."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string",
+                       "enum": ["focus", "unfocus", "hold", "release", "resolve", "intend", "expect", "note"]},
+            "item": {"type": "string", "description": "Item id as shown in brackets, e.g. d3."},
+            "text": {"type": "string"},
+            "source": {"type": "string", "description": "door, bench, self, or a tool name"},
+            "channel": {"type": "string", "enum": list(EXPECTATION_CHANNELS)},
+            "within_minutes": {"type": "number"},
+        },
+        "required": ["action"],
+    },
+}
+
+REPLY_DEF = {
+    "name": "reply",
+    "description": (
+        "Answer someone waiting at the door. They see your reply in the loop's conversation. "
+        "Resolves that message. 'item' defaults to the oldest unanswered message."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"item": {"type": "string"}, "text": {"type": "string"}},
+        "required": ["text"],
+    },
+}
+
+CONTROL_DEF = {
+    "name": "loop_control",
+    "description": (
+        "Your own running process. 'status' — how you're running. "
+        "'rest' (minutes, reason) — sleep longer than usual when nothing is worth spending energy on; "
+        "a message at the door will still wake you. "
+        "'stop' (reason) — end the loop entirely. Prefer rest."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["status", "rest", "stop"]},
+            "minutes": {"type": "number"},
+            "reason": {"type": "string"},
+        },
+        "required": ["action"],
+    },
+}
 
 
-class ToolRegistry:
-    """Maps tool names to (definition, handler).
+class LoopTools:
+    def __init__(self, daemon: "LoopDaemon"):
+        self.d = daemon
+        self.handlers: Dict[str, Tuple[dict, Callable[[dict], str]]] = {
+            "attend": (ATTEND_DEF, self.attend),
+            "reply": (REPLY_DEF, self.reply),
+            "loop_control": (CONTROL_DEF, self.control),
+        }
+        if daemon.workbench:
+            self.handlers["workbench"] = (daemon.workbench.definition(), daemon.workbench.execute)
 
-    Definitions use the plain ``{name, description, parameters}`` shape
-    and are wrapped into OpenAI function-calling format on export.
-    """
-
-    def __init__(self):
-        self._tools: Dict[str, Tuple[dict, ToolHandler]] = {}
-
-    def register(self, definition: dict, handler: ToolHandler):
-        self._tools[definition["name"]] = (definition, handler)
+    def names(self) -> List[str]:
+        return list(self.handlers)
 
     def definitions(self) -> List[dict]:
-        return [{"type": "function", "function": d} for d, _ in self._tools.values()]
+        return [{"type": "function", "function": d} for d, _ in self.handlers.values()]
 
-    async def execute(self, name: str, arguments: dict) -> str:
-        if name not in self._tools:
-            return f"Error: unknown tool '{name}'"
-        _, handler = self._tools[name]
-        result = handler(arguments)
-        if inspect.isawaitable(result):
-            result = await result
-        return result if isinstance(result, str) else json.dumps(result, default=str)
+    def execute(self, name: str, args: dict) -> str:
+        return self.handlers[name][1](args or {})
 
+    # ── attend ────────────────────────────────────────────────────
 
-class LoopControlTool:
-    """Lets the persona inspect and steer its own loop — including stopping it."""
+    def _view(self) -> str:
+        """What comes into view after shifting focus: the focus and what's close."""
+        w = self.d.world
+        w.ensure_vectors()
+        w.layout()
+        now = time.time()
+        lines = [f"Focus: {w.focus_label()}"]
+        focus = w.items.get(w.focus_item) if w.focus_item else None
+        if focus:
+            lines[0] = f"Focus: [{focus.id}] {focus.text}"
+        close = [i for i in w.in_field() if i.id != w.focus_item and w.ring(i) == CLOSE]
+        close.sort(key=lambda i: -w.rings.get(i.id, (0, 0.0))[1])
+        for it in close:
+            lines.append(f"  close: [{it.id}] {'◆ ' if it.held else ''}{it.line(w.detail(it), now)}")
+        if not close:
+            lines.append("  nothing else feels close to it")
+        return "\n".join(lines)
 
-    def __init__(self, state: LoopState):
-        self.state = state
+    def attend(self, args: dict) -> str:
+        w = self.d.world
+        action = args.get("action", "focus")
+        ref = (args.get("item") or "").strip().strip("[]")
+        item = w.get(ref) if ref else None
+        if ref and not item:
+            return f"There is no [{ref}] in your field — it may have faded."
+        text = (args.get("text") or "").strip()
 
-    @staticmethod
-    def definition() -> dict:
-        return {
-            "name": "loop_control",
-            "description": (
-                "Query or control your own autonomous loop. "
-                "Actions: "
-                "'status' — get current loop state, tick count, cost, errors; "
-                "'tick_history' — get recent tick results with optional limit; "
-                "'request_pause' — pause the loop after the current tick; "
-                "'request_resume' — resume from pause; "
-                "'request_stop' — gracefully stop the loop entirely. Use this when "
-                "you have completed all available tasks, are stuck in a repetitive "
-                "cycle, or determine that continued execution is unproductive. "
-                "Provide a reason so the operator knows why you stopped."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "action": {
-                        "type": "string",
-                        "enum": [
-                            "status",
-                            "tick_history",
-                            "request_pause",
-                            "request_resume",
-                            "request_stop",
-                        ],
-                        "description": "The action to perform.",
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Max tick history entries to return (default 10).",
-                    },
-                    "reason": {
-                        "type": "string",
-                        "description": "Reason for stopping or pausing. Required for request_stop.",
-                    },
-                },
-                "required": ["action"],
-            },
-        }
+        if action == "focus":
+            if item:
+                w.move(item_id=item.id)
+                self.d.event("attend", f"focused [{item.id}] {item.gist}")
+            elif args.get("source"):
+                src = args["source"].strip()
+                pick = sorted((i for i in w.in_field() if i.source == src and not i.resolved),
+                              key=lambda i: -i.salience)
+                if not pick:
+                    return f"Nothing from {source_name(src)} is in your field right now."
+                w.move(item_id=pick[0].id)
+                self.d.event("attend", f"focused {src}: [{pick[0].id}] {pick[0].gist}")
+            elif text:
+                w.move(text=text)
+                self.d.event("attend", f'focused on "{_clip(text, 60)}"')
+            else:
+                return "Focus on what? Give an item id, a source, or text."
+            return self._view()
+        if action == "unfocus":
+            w.move()
+            self.d.event("attend", "let the gaze wander")
+            return self._view()
 
-    def execute(self, arguments: dict) -> str:
-        action = arguments.get("action", "status")
-        state = self.state
+        if action in ("hold", "release", "resolve") and not item:
+            return f"'{action}' needs an item id."
+        if action == "hold":
+            if w.detail(item) >= TRACE:
+                return f"[{item.id}] is too faint to hold — focus on it first."
+            if not w.hold(item):
+                return "You're already holding three things — release one first."
+            return f"Holding [{item.id}] {item.gist}."
+        if action == "release":
+            item.held = False
+            return f"Released [{item.id}]."
+        if action == "resolve":
+            w.resolve(item)
+            self.d.event("resolve", f"resolved [{item.id}] {item.gist}")
+            return f"Resolved [{item.id}] {item.gist}."
 
+        if not text:
+            return f"'{action}' needs text."
+        if action == "intend":
+            it, _ = w.upsert(f"intent:{text.lower()[:60]}", "intention", "self", f"you intend to {text}",
+                             gist=f"intend: {text[:48]}", salience=0.7, valence=0.1)
+            w.hold(it)
+            return f"Intention set [{it.id}] — you'll keep it in view."
+        if action == "expect":
+            channel = args.get("channel", "door")
+            if channel not in EXPECTATION_CHANNELS:
+                return f"You can expect things from: {', '.join(EXPECTATION_CHANNELS)}."
+            minutes = max(1.0, min(24 * 60.0, float(args.get("within_minutes") or 30)))
+            ex = w.expect(text, channel, minutes)
+            self.d.event("expect", f"expects {text} from {channel} within {minutes:.0f}m")
+            return f"Expectation set ({ex.id}): {text} from {source_name(channel)} within {minutes:.0f} minutes."
+        if action == "note":
+            it, _ = w.upsert(f"note:{w.tick}:{text.lower()[:40]}", "note", "self", text, salience=0.5, valence=0.05)
+            return f"Noted [{it.id}]."
+        return f"Unknown action '{action}'."
+
+    # ── reply ─────────────────────────────────────────────────────
+
+    def reply(self, args: dict) -> str:
+        text = (args.get("text") or "").strip()
+        if not text:
+            return "Say something."
+        w = self.d.world
+        ref = (args.get("item") or "").strip().strip("[]")
+        item = w.get(ref) if ref else None
+        if ref and (not item or item.kind != "message"):
+            return f"[{ref}] isn't a message at the door."
+        if not item:
+            waiting = sorted((i for i in w.items.values() if i.kind == "message" and not i.resolved), key=lambda i: i.born)
+            item = waiting[0] if waiting else None
+        self.d.record_reply(text, item)
+        return "Sent." + (f" [{item.id}] resolved." if item else " (No one was waiting; it's in the conversation.)")
+
+    # ── loop_control ──────────────────────────────────────────────
+
+    def control(self, args: dict) -> str:
+        action = args.get("action", "status")
+        reason = (args.get("reason") or "").strip()
         if action == "status":
-            return json.dumps(state.to_dict(), indent=2, default=str)
-
-        elif action == "tick_history":
-            limit = arguments.get("limit", 10)
-            return json.dumps({
-                "ticks": state.tick_history[-limit:],
-                "total_recorded": len(state.tick_history),
-            }, indent=2, default=str)
-
-        elif action == "request_pause":
-            if not state.running:
-                return json.dumps({"ok": False, "reason": "Loop is not running"})
-            state.paused = True
-            return json.dumps({
-                "ok": True,
-                "message": "Pause requested — loop will pause after current tick",
-            })
-
-        elif action == "request_resume":
-            if not state.paused:
-                return json.dumps({"ok": False, "reason": "Loop is not paused"})
-            state.paused = False
-            return json.dumps({"ok": True, "message": "Loop resumed"})
-
-        elif action == "request_stop":
-            reason = arguments.get("reason", "Agent requested stop")
-            if not state.running:
-                return json.dumps({"ok": False, "reason": "Loop is not running"})
-            state.running = False
-            state.stop_reason = f"agent_requested: {reason}"
-            log.info("[loop] Agent requested stop: %s", reason)
-            return json.dumps({
-                "ok": True,
-                "message": f"Stop requested — loop will end after current tick. Reason: {reason}",
-            })
-
-        return json.dumps({"error": f"Unknown action: {action}"})
-
-    def register(self, registry: ToolRegistry):
-        registry.register(self.definition(), self.execute)
+            s = self.d.status()
+            return json.dumps({k: s[k] for k in ("phase", "tick", "session_ticks", "session_tokens", "focus", "mood", "budget")},
+                              default=str)
+        if action == "rest":
+            minutes = float(args.get("minutes") or 30)
+            granted = self.d.request_rest(minutes, reason or "chose to rest")
+            return f"You'll rest about {granted:.0f} minutes after this tick. A message will still wake you."
+        if action == "stop":
+            self.d.request_stop(f"agent: {reason or 'no reason given'}")
+            return "The loop will stop after this tick."
+        return f"Unknown action '{action}'."

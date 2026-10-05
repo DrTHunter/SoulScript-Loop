@@ -1,33 +1,42 @@
-"""SoulScript Loop — a continuously ticking inner loop for a single AI persona.
+"""SoulScript Loop — a continuously running perceptual field for one AI persona.
 
-Extracted from the OrionForge AGI loop. Each tick the runner senses
-(time, budget, inbox, last tick, repetition), builds a stimulus the
-persona cannot author, sends it through an LLM with tools, and records
-the result. Safety guards stop or pause the loop on repetition, cost
-overruns, and error streaks.
+    channels   → signals she can't author: time, energy, the feel of her last action,
+                 messages and tasks at the door, changes to her bench
+    prediction → a belief per signal; the error becomes surprise; surprise drives learning
+    world      → the field: focus on anything, everything else arranged by relatedness,
+                 HUD gauges, alerts, fading, finite capacity, mood read off the field
+    embedding  → relatedness (MiniLM if installed, a hashed fallback otherwise)
+    daemon     → wall-time process woken by messages: sense → update → predict → attend →
+                 feel → render → think/act → guard → record → sleep
+    tools      → attend, reply, loop_control, workbench (the loop's own tools)
+    host       → StandaloneHost + build_loop: run it with any OpenAI-compatible model
 """
 
-from .backend import Backend, Completion, EchoBackend, OpenAICompatibleBackend
+from .backend import Backend, Completion, EchoBackend, OpenAICompatibleBackend, backend_from_config
 from .config import LoopConfig
-from .runner import LoopRunner
-from .senses import DEFAULT_SENSES, Sense
-from .state import LoopState
-from .tools import LoopControlTool, ToolRegistry
+from .daemon import Host, LoopDaemon
+from .embedding import HashEmbedder, SentenceEmbedder
+from .host import StandaloneHost, build_loop
+from .registry import ToolRegistry
 from .workbench import Workbench
+from .world import InnerWorld
 
 __all__ = [
     "Backend",
     "Completion",
-    "DEFAULT_SENSES",
     "EchoBackend",
+    "HashEmbedder",
+    "Host",
+    "InnerWorld",
     "LoopConfig",
-    "LoopControlTool",
-    "LoopRunner",
-    "LoopState",
+    "LoopDaemon",
     "OpenAICompatibleBackend",
-    "Sense",
+    "SentenceEmbedder",
+    "StandaloneHost",
     "ToolRegistry",
     "Workbench",
+    "backend_from_config",
+    "build_loop",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

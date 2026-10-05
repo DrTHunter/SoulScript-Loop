@@ -1,21 +1,16 @@
-"""Workbench — a persistent scratch space the persona builds in across ticks.
+"""Workbench — the agent's private making-space, beside what it perceives.
 
-Files live under one root directory and every path is confined to it.
-A reflection log records what she built, what worked, what didn't, and
-what's next; the workbench sense shows her unfinished work every tick.
-
-Code execution and self-made tools are deliberately NOT here — an
-unattended loop must not run arbitrary code on the host. See the
-README roadmap.
+Files live under one root and every path is confined to it. Reflections
+record what was built, what worked, and what's next. The bench channel
+reads this each tick; changes the agent didn't make register as surprise.
+No code execution here: an unattended loop must not run code on the host.
 """
 
 import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
-
-from .tools import ToolRegistry
+from typing import Dict, List, Tuple
 
 log = logging.getLogger(__name__)
 
@@ -28,8 +23,7 @@ class Workbench:
         self.root.mkdir(parents=True, exist_ok=True)
         self.max_file_bytes = max_file_bytes
         self.max_total_bytes = max_total_bytes
-
-    # ── Paths ─────────────────────────────────────────────────────
+        self.known: Dict[str, Tuple[int, float]] = self.signature()
 
     def _resolve(self, rel: str) -> Path:
         if not rel or not isinstance(rel, str):
@@ -41,24 +35,33 @@ class Workbench:
             raise PermissionError("use action='reflect' to write reflections")
         return path
 
-    def files(self) -> list[dict]:
+    def files(self) -> List[dict]:
         out = []
-        for p in sorted(self.root.rglob("*")):
+        for p in self.root.rglob("*"):
             if p.is_file() and p.name != REFLECTIONS_FILE:
-                stat = p.stat()
-                out.append({
-                    "path": p.relative_to(self.root).as_posix(),
-                    "bytes": stat.st_size,
-                    "modified": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
-                })
-        return out
+                st = p.stat()
+                out.append({"path": p.relative_to(self.root).as_posix(), "bytes": st.st_size, "mtime": st.st_mtime,
+                            "modified": datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat()})
+        return sorted(out, key=lambda f: -f["mtime"])
 
-    def _total_bytes(self) -> int:
-        return sum(p.stat().st_size for p in self.root.rglob("*") if p.is_file())
+    def signature(self) -> Dict[str, Tuple[int, float]]:
+        return {f["path"]: (f["bytes"], f["mtime"]) for f in self.files()}
 
-    # ── Reflections ───────────────────────────────────────────────
+    def outside_changes(self) -> List[str]:
+        """Paths changed since the agent last touched the bench (i.e. by someone else)."""
+        now = self.signature()
+        changed = [p for p, sig in now.items() if self.known.get(p) != sig]
+        changed += [p for p in self.known if p not in now]
+        self.known = now
+        return changed
 
-    def reflections(self, limit: int = 5) -> list[dict]:
+    def read(self, rel: str) -> str:
+        path = self._resolve(rel)
+        if not path.is_file():
+            raise FileNotFoundError(rel)
+        return path.read_text(encoding="utf-8", errors="replace")
+
+    def reflections(self, limit: int = 5) -> List[dict]:
         path = self.root / REFLECTIONS_FILE
         if not path.is_file():
             return []
@@ -67,38 +70,37 @@ class Workbench:
             for line in f:
                 line = line.strip()
                 if line:
-                    entries.append(json.loads(line))
+                    try:
+                        entries.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
         return entries[-limit:]
 
-    # ── Tool ──────────────────────────────────────────────────────
+    def _total_bytes(self) -> int:
+        return sum(p.stat().st_size for p in self.root.rglob("*") if p.is_file())
 
     @staticmethod
     def definition() -> dict:
         return {
             "name": "workbench",
             "description": (
-                "Your persistent scratch space. Files here survive between ticks and restarts, "
-                "so you can build something over many ticks and iterate on it. "
-                "Actions: 'list' — list your files; 'read' — read a file; "
-                "'write' — create or overwrite a file; 'append' — add to the end of a file; "
-                "'delete' — remove a file; 'reflect' — log what you built, what worked, "
-                "what didn't, and what to build next; 'reflections' — read recent reflections. "
-                "Paths are relative to the workbench (e.g. 'drafts/poem.md')."
+                "Your bench: a private space for making things. Files here persist across ticks and restarts. "
+                "Actions: 'list'; 'read' (path); 'write' (path, content); 'append' (path, content); "
+                "'delete' (path); 'reflect' (built, worked, didnt, next) — log progress and what to make next; "
+                "'reflections' (limit). Paths are relative, e.g. 'drafts/essay.md'."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {
-                        "type": "string",
-                        "enum": ["list", "read", "write", "append", "delete", "reflect", "reflections"],
-                    },
-                    "path": {"type": "string", "description": "File path relative to the workbench."},
-                    "content": {"type": "string", "description": "Text for write/append."},
-                    "built": {"type": "string", "description": "reflect: what you built or changed."},
-                    "worked": {"type": "string", "description": "reflect: what worked."},
-                    "didnt": {"type": "string", "description": "reflect: what didn't work."},
-                    "next": {"type": "string", "description": "reflect: what to build next."},
-                    "limit": {"type": "integer", "description": "reflections: how many (default 5)."},
+                    "action": {"type": "string",
+                               "enum": ["list", "read", "write", "append", "delete", "reflect", "reflections"]},
+                    "path": {"type": "string"},
+                    "content": {"type": "string"},
+                    "built": {"type": "string"},
+                    "worked": {"type": "string"},
+                    "didnt": {"type": "string"},
+                    "next": {"type": "string"},
+                    "limit": {"type": "integer"},
                 },
                 "required": ["action"],
             },
@@ -108,14 +110,9 @@ class Workbench:
         action = args.get("action", "list")
         try:
             if action == "list":
-                return json.dumps({"files": self.files()}, indent=2)
-
+                return json.dumps({"files": [{k: f[k] for k in ("path", "bytes", "modified")} for f in self.files()]})
             if action == "read":
-                path = self._resolve(args.get("path", ""))
-                if not path.is_file():
-                    return json.dumps({"ok": False, "reason": "No such file"})
-                return path.read_text(encoding="utf-8", errors="replace")
-
+                return self.read(args.get("path", ""))
             if action in ("write", "append"):
                 path = self._resolve(args.get("path", ""))
                 content = args.get("content", "")
@@ -124,51 +121,29 @@ class Workbench:
                 if new_size > self.max_file_bytes:
                     return json.dumps({"ok": False, "reason": f"File would exceed {self.max_file_bytes} bytes"})
                 if self._total_bytes() - existing + new_size > self.max_total_bytes:
-                    return json.dumps({"ok": False, "reason": "Workbench is full — delete something first"})
+                    return json.dumps({"ok": False, "reason": "The bench is full — delete something first"})
                 path.parent.mkdir(parents=True, exist_ok=True)
                 with open(path, "a" if action == "append" else "w", encoding="utf-8") as f:
                     f.write(content)
+                self.known = self.signature()
                 return json.dumps({"ok": True, "path": path.relative_to(self.root).as_posix(), "bytes": new_size})
-
             if action == "delete":
                 path = self._resolve(args.get("path", ""))
                 if not path.is_file():
                     return json.dumps({"ok": False, "reason": "No such file"})
                 path.unlink()
+                self.known = self.signature()
                 return json.dumps({"ok": True})
-
             if action == "reflect":
-                entry = {
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                    **{k: args.get(k, "") for k in ("built", "worked", "didnt", "next")},
-                }
+                entry = {"ts": datetime.now(timezone.utc).isoformat(),
+                         **{k: args.get(k, "") for k in ("built", "worked", "didnt", "next")}}
                 with open(self.root / REFLECTIONS_FILE, "a", encoding="utf-8") as f:
                     f.write(json.dumps(entry) + "\n")
                 return json.dumps({"ok": True})
-
             if action == "reflections":
-                return json.dumps({"reflections": self.reflections(args.get("limit", 5))}, indent=2)
-
+                return json.dumps({"reflections": self.reflections(int(args.get("limit", 5)))})
             return json.dumps({"error": f"Unknown action: {action}"})
+        except FileNotFoundError:
+            return json.dumps({"ok": False, "reason": "No such file"})
         except (PermissionError, ValueError) as exc:
             return json.dumps({"ok": False, "reason": str(exc)})
-
-    # ── Sense ─────────────────────────────────────────────────────
-
-    def sense(self, ctx) -> Optional[str]:
-        """Show her what's on the bench, so unfinished work pulls her back."""
-        files = self.files()
-        last = self.reflections(1)
-        if not files and not last:
-            return None
-        lines = [f"workbench: {len(files)} file(s)"]
-        for f in files[-8:]:
-            lines.append(f"  - {f['path']} ({f['bytes']} bytes)")
-        if len(files) > 8:
-            lines.append(f"  … and {len(files) - 8} more")
-        if last and last[0].get("next"):
-            lines.append(f"  you planned next: {last[0]['next']}")
-        return "\n".join(lines)
-
-    def register(self, registry: ToolRegistry):
-        registry.register(self.definition(), self.execute)

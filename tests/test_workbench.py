@@ -1,7 +1,12 @@
 import asyncio
 import json
 
-from soulscript_loop import Completion, LoopConfig, LoopRunner, Workbench
+import time
+
+from soulscript_loop import Completion, EchoBackend, HashEmbedder, LoopConfig, Workbench, build_loop
+from soulscript_loop.budget import DailyBudget
+from soulscript_loop.channels import ChannelContext, bench_channel
+from soulscript_loop.world import InnerWorld
 
 
 def test_write_read_append_list_delete(tmp_path):
@@ -37,9 +42,12 @@ def test_reflections_are_protected_and_sensed(tmp_path):
     assert json.loads(wb.execute({"action": "write", "path": ".reflections.jsonl", "content": "x"}))["ok"] is False
     wb.execute({"action": "write", "path": "tool_idea.md", "content": "sketch"})
     wb.execute({"action": "reflect", "built": "a sketch", "worked": "outline", "didnt": "naming", "next": "finish the parser"})
-    reading = wb.sense(None)
-    assert "tool_idea.md" in reading
-    assert "you planned next: finish the parser" in reading
+    ctx = ChannelContext(now=time.time(), tick=1, world=InnerWorld(), budget=DailyBudget(tmp_path / "b.json", 1000),
+                         workbench=wb)
+    sig = bench_channel(ctx)
+    texts = [i["text"] for i in sig.items]
+    assert any(t.startswith("tool_idea.md") for t in texts)
+    assert "you planned next: finish the parser" in texts
 
 
 def test_runner_gives_persona_a_workbench(tmp_path):
@@ -61,15 +69,14 @@ def test_runner_gives_persona_a_workbench(tmp_path):
             return Completion(message={"role": "assistant", "content": f"tick {len(self.calls)}"})
 
     backend = Builder()
-    config = LoopConfig(ticks_per_loop=2, max_loops=1, loop_interval_seconds=0, data_dir=str(tmp_path))
-    runner = LoopRunner(config, backend)
-    asyncio.run(runner.run())
+    daemon = build_loop(LoopConfig(data_dir=str(tmp_path)), backend=backend, embedder=HashEmbedder())
+    asyncio.run(daemon.tick())
+    asyncio.run(daemon.tick())
     assert (tmp_path / "workbench" / "plan.md").read_text() == "step 1"
-    assert "workbench: 1 file(s)" in backend.calls[-1][-1]["content"]
+    assert "plan.md" in backend.calls[-1][-1]["content"]
 
 
 def test_workbench_can_be_disabled(tmp_path):
-    config = LoopConfig(data_dir=str(tmp_path), workbench=False)
-    runner = LoopRunner(config, backend=None)
-    assert runner.workbench is None
-    assert all(t["function"]["name"] != "workbench" for t in runner.tools.definitions())
+    daemon = build_loop(LoopConfig(data_dir=str(tmp_path), workbench=False), backend=EchoBackend(), embedder=HashEmbedder())
+    assert daemon.workbench is None
+    assert "workbench" not in daemon.tools.names()

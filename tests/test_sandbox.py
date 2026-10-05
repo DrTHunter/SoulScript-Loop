@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from soulscript_loop import LoopConfig, LoopRunner
+from soulscript_loop import EchoBackend, HashEmbedder, LoopConfig, build_loop
 from soulscript_loop.sandbox import DockerSandbox, RunPythonTool
 
 _probe = DockerSandbox.__new__(DockerSandbox)
@@ -36,16 +36,14 @@ def test_cannot_run_files_outside_workbench(tmp_path):
 
 
 def test_sandbox_off_by_default(tmp_path):
-    runner = LoopRunner(LoopConfig(data_dir=str(tmp_path)), backend=None)
-    assert runner.sandbox is None
-    assert "run_python" not in [t["function"]["name"] for t in runner.tools.definitions()]
+    daemon = build_loop(LoopConfig(data_dir=str(tmp_path)), backend=EchoBackend(), embedder=HashEmbedder())
+    assert "run_python" not in [t["function"]["name"] for t in daemon.host.tools.definitions()]
 
 
 def test_no_host_fallback_when_docker_missing(tmp_path):
     config = LoopConfig(data_dir=str(tmp_path), sandbox={"enabled": True, "docker": "definitely-not-docker"})
-    runner = LoopRunner(config, backend=None)
-    assert runner.sandbox is None
-    assert "run_python" not in [t["function"]["name"] for t in runner.tools.definitions()]
+    daemon = build_loop(config, backend=EchoBackend(), embedder=HashEmbedder())
+    assert "run_python" not in [t["function"]["name"] for t in daemon.host.tools.definitions()]
 
 
 @needs_docker

@@ -22,7 +22,7 @@ import uuid
 from pathlib import Path
 from typing import List, Optional
 
-from .tools import ToolRegistry
+from .registry import ToolRegistry
 
 log = logging.getLogger(__name__)
 

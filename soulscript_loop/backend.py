@@ -1,5 +1,6 @@
 """Model backends. Anything with ``async complete(messages, tools)`` works."""
 
+import json
 import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Protocol
@@ -12,6 +13,7 @@ class Completion:
     usage: Dict[str, Any] = field(default_factory=dict)
     cost: float = 0.0
     model: str = ""
+    tokens: int = 0                      # spent from the daily energy budget
 
 
 class Backend(Protocol):
@@ -72,26 +74,33 @@ class OpenAICompatibleBackend:
             usage.get("prompt_tokens", 0) * self.price_in
             + usage.get("completion_tokens", 0) * self.price_out
         ) / 1_000_000
+        message = choice.get("message") or {}
+        tokens = usage.get("total_tokens") or (usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0))
+        if not tokens:  # some local servers omit usage; estimate so energy still drains
+            tokens = (len(json.dumps(messages)) + len(json.dumps(message))) // 4
         return Completion(
-            message=choice.get("message") or {},
+            message=message,
             finish_reason=choice.get("finish_reason") or "stop",
             usage=usage,
             cost=cost,
             model=data.get("model", self.model),
+            tokens=int(tokens),
         )
 
 
 class EchoBackend:
-    """Offline backend for demos and tests: reflects the stimulus back, costs nothing."""
+    """Offline backend for demos and tests: reports its focus back, costs nothing (but still tires)."""
 
     model = "echo"
 
     async def complete(self, messages: List[dict], tools: List[dict]) -> Completion:
         last = next((m for m in reversed(messages) if m.get("role") == "user"), {})
-        first_line = (last.get("content") or "").splitlines()[0] if last.get("content") else ""
+        lines = (last.get("content") or "").splitlines()
+        focus = next((ln for ln in lines if ln.startswith("FOCUS")), lines[0] if lines else "")
         return Completion(
-            message={"role": "assistant", "content": f"Sensed: {first_line}"},
+            message={"role": "assistant", "content": f"I see it. {focus}"},
             model=self.model,
+            tokens=sum(len(m.get("content") or "") for m in messages) // 4,
         )
 
 

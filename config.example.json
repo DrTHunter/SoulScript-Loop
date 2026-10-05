@@ -1,22 +1,29 @@
 {
   "agent": "elysia",
-  "system_prompt": "You are Elysia. You are not waiting for a message — you are already running. Each tick you receive senses you did not author. Act on them, carry your thread forward, and stop yourself when there is nothing meaningful left to do.",
-  "stimulus": "",
+  "system_prompt": "You are Elysia. You are not waiting for a message — you are already running. You see through a field of signals you did not author. Follow what matters, act on it, and rest when nothing is worth the energy.",
 
-  "ticks_per_loop": 15,
-  "max_loops": 5,
-  "tick_interval_seconds": 1.0,
-  "loop_interval_seconds": 1800,
+  "base_interval_seconds": 120,
+  "min_interval_seconds": 20,
+  "max_interval_seconds": 1800,
+  "max_rest_minutes": 240,
 
-  "max_steps_per_tick": 3,
-  "max_tool_calls_per_tick": 15,
-  "history_window": 20,
+  "daily_token_budget": 200000,
+  "daily_cost_cap": 2.00,
+  "max_tokens_per_tick": 30000,
 
-  "stale_streak_limit": 2,
-  "auto_pause_on_error_streak": 5,
-  "auto_pause_on_budget": true,
-  "per_tick_cap": 0.10,
-  "per_session_cap": 2.00,
+  "max_steps_per_tick": 4,
+  "max_tool_calls_per_tick": 12,
+  "history_window": 4,
+
+  "capacity_chars": 2400,
+  "capture_threshold": 0.45,
+  "embedder": "auto",
+
+  "stale_streak_limit": 3,
+  "guard_rest_minutes": 30,
+  "max_guard_rests": 3,
+  "error_streak_limit": 5,
+  "rumination_ticks": 5,
 
   "data_dir": "data",
   "workbench": true,
