@@ -81,7 +81,7 @@ def test_she_has_no_sudo_by_default(box):
 def test_she_cannot_read_the_token(box):
     env = sh(box, "env")["stdout"]
     assert TOKEN not in env and "MACHINE_TOKEN" not in env
-    # the server is PID 1 (start.sh exec'd into it), a root process
+    # PID 1 and the server are root processes
     r = sh(box, "cat /proc/1/environ")
     assert r["exit"] != 0 and TOKEN not in r["stdout"]
     assert sh(box, "grep -rl " + TOKEN + " /proc/1 2>/dev/null; true")["stdout"].strip() == ""
@@ -111,7 +111,7 @@ def test_a_runaway_is_killed_with_its_children(box):
     assert r["timed_out"] is True
     time.sleep(1)
     assert sh(box, "test -e ~/survived && echo yes || echo no")["stdout"].strip() == "no"
-    assert sh(box, "pgrep -x sleep | wc -l")["stdout"].strip() == "0"
+    assert sh(box, "pgrep -x sleep | wc -l")["stdout"].strip() == "0"      # killed, and reaped (tini is PID 1)
 
 
 def test_a_symlink_out_of_her_home_does_not_leak(box):
