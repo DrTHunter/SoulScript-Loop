@@ -42,15 +42,29 @@ This **is** an attempt at the *experiential interface* for one specific characte
 |---|-----------|------|--------|
 | 1 | **The daemon** | Runs on wall time, not conversation turns. A message wakes it early, energy slows it down, and surprise speeds it up. | ✅ Built |
 | 2 | **Sensory channels** | Time, energy, proprioception, the door, the bench. The daemon measures them; the model never writes them. | ✅ Built, pluggable |
-| 3 | **Energy** | A hard daily token budget. When it's spent, she sleeps until midnight UTC. Attention is scarce, so choices matter. | ✅ Built |
+| 3 | **Energy** | A hard daily token budget. When it's spent, she sleeps until midnight in your time zone. Attention is scarce, so choices matter. | ✅ Built |
 | 4 | **Predictive processing** | Every signal carries a belief. Observations are compared to it, and the error becomes surprise. Surprise drives learning, salience, and attention capture. She can also make her own predictions and *feel* them come true or break. | ✅ Built |
 | 5 | **The field** | Focus on anything. Everything else is arranged around it by relatedness. Limited capacity, fading, mood read off the field. | ✅ Built |
 | 6 | **Metacognitive guards** | She notices when she's repeating herself or circling, and gets made to rest if it continues. | ✅ Built |
 | 7 | **The workbench** | Her private making-space, next to perception but separate from it. Files, a reflection log, and an opt-in Docker sandbox. | ✅ Built |
 | 8 | **Identity anchoring** | Re-anchor the persona every tick using soul-script sections retrieved for *what she's currently seeing*. | 🔌 One function: plug in [SoulScript Engine](https://github.com/DrTHunter/SoulScript-Engine) via `identity=` |
-| 9 | **Her own machine** | A `linux` tool that runs commands on a real Linux box she can build on. The loop ships the tool and the contract, not the machine. | 🕳️ Bring your own Linux |
+| 9 | **Her own machine** | A `linux` tool that runs commands on a real Linux box she can build on, plus a hardened reference box in [`machine/`](machine/) with a HUD she can read and can't forge. | ✅ Built, opt-in |
+| 10 | **The quiet gate** | A timer wake that finds nothing new after an idle tick is slept through with no model call, so a quiet night costs almost nothing. | ✅ Built |
+| 11 | **Side models** | An `llm` tool: she hands a self-contained piece of work to another model *she* picks, and its cost comes out of her energy. | ✅ Built, opt-in |
+| 12 | **Souls, not a persona** | The loop ships no character. She is whatever [soul script](souls/) you give her, read fresh every tick. One worked example: **Codex Animus**. | ✅ Built |
 
 Everything marked built is covered by tests.
+
+### New in 0.3
+
+* **Souls are files.** `soul_script` points at a markdown file, read every tick. Nothing is baked in; [`souls/`](souls/) has an empty template and one worked example, **Codex Animus**, an architect whose job is helping you write a soul of your own.
+* **Her time zone is yours.** `timezone` sets what "morning" means, the clock she reads, and when "today" (her energy) ends. A `⏲` line under the HUD gives measured wall time: when the last tick began, how long it ran, how long she really slept.
+* **The quiet gate.** Idle timer wakes with nothing new are slept through without a model call (at most `gate_max_skips` in a row; a message, task, surprise or pull always gets a thought). She can switch it off with `loop_control gate`.
+* **Prompt-cache friendly.** The daemon marks cache breakpoints (end of the stable system prompt, end of carried history, this moment), keeps history append-only until it doubles so each tick's prefix is still a prefix, and tracks `cached_tokens`. Set `backend.prompt_cache` for providers that take `cache_control` (Claude and Gemini through OpenRouter or similar); everyone else never sees the markers.
+* **Her own pace.** `loop_control pace` lets her wake fast while something is live and slow down when it isn't, inside your limits. It survives restarts.
+* **The handoff letter.** Before a restart she can leave `handoff/letter.md` on her bench. The next instance is shown it first, held and focused, in her own words, once.
+* **Side models** (`llm`). List models in config and she gets a tool to hand work to them.
+* **A machine to put her in.** A reference Linux box in [`machine/`](machine/), and a HUD written onto it by a process she doesn't own.
 
 ### Why a field, not a room
 
@@ -214,7 +228,7 @@ class Signal:
 | **Error streak** | `error_streak_limit` failed ticks in a row | Stopped. Messages are kept in her field |
 | **Energy** | Daily token budget or cost cap spent | Sleeps until the budget resets. Messages queue up |
 | **Per-tick caps** | Steps, tool calls, tokens | A runaway chain is cut short inside the tick |
-| **Self-control** | `loop_control(action="rest" \| "stop")` | She can rest when nothing is worth the energy, or stop herself |
+| **Self-control** | `loop_control(action="pace" \| "rest" \| "gate" \| "stop")` | She can set her own rhythm, rest when nothing is worth the energy, change the quiet gate, or stop herself |
 
 ---
 
@@ -229,6 +243,8 @@ cd SoulScript-Loop && pip install -e ".[dev,embeddings]"
 ```
 
 Leave off `embeddings` if you don't want `sentence-transformers`. Relatedness then falls back to a hashed bag-of-words.
+
+**Pick who she is.** `config.example.json` runs **Codex Animus** (`souls/codex_animus.md`). For an empty slate, use `config.blank.json` and write your own from [`souls/TEMPLATE.md`](souls/TEMPLATE.md). See [`souls/`](souls/).
 
 **Try it offline** (echo backend, no API key, no cost). Type a message while it runs and watch it pull her focus:
 
@@ -287,9 +303,9 @@ tools.register(
 daemon = build_loop(config, tools=tools)
 ```
 
-### Give her a machine (bring your own Linux)
+### Give her a machine
 
-The loop doesn't come with a machine. It comes with a **slot** for one. Turn on `machine` and she gets a `linux` tool that sends one bash command per call to any server that speaks this contract:
+Turn on `machine` and she gets a `linux` tool that sends one bash command per call to a server that speaks a small contract. **[`machine/`](machine/) is a reference box that speaks it**: Ubuntu in a container, her own home on a persistent volume, hardened so you can hand it to a mind. Or bring any server of your own:
 
 ```
 POST {url}/exec
@@ -300,15 +316,32 @@ Authorization: Bearer <token>
 ```
 
 ```json
-"machine": { "enabled": true, "url": "http://my-box:8080", "token_env": "LOOP_MACHINE_TOKEN" }
+"machine": { "enabled": true, "url": "http://localhost:8080", "hud_url": "http://localhost:8080", "token_env": "MACHINE_TOKEN" }
 ```
 
-What goes behind that URL is up to you: a VM, a container, a Raspberry Pi, a cloud box. Whatever you choose, commands never run on the host that runs the loop. Build it like you're handing someone a shell, because you are:
+With the reference box, set `hud_url` too and the loop writes her HUD onto the machine every tick, into a root-owned folder she can read and cannot forge (`~/hud/now.json`, `now.txt`, `log.jsonl`). She can steer her own *state* (pace, rest, a note into her field) by writing `~/hud-control.json`; measurements stay the host's, state stays hers. The whole story, the walls, and how to run it are in [`machine/README.md`](machine/README.md).
+
+Whatever you run behind that URL, build it like you're handing someone a shell, because you are:
 
 * Never give the endpoint a public address. Keep it on localhost, a private network, or behind a tunnel.
 * Run her as an unprivileged user, and decide on purpose whether she gets `sudo` and whether she gets the internet.
-* Don't let her commands read the token. Strip it from the environment of the shell you spawn.
-* Cap the time and output of each command, and log every command somewhere you can watch.
+* Don't let her commands read the token (the reference box keeps it in a root process she can't inspect).
+* Cap the time and output of each command, and log every command somewhere she can't edit.
+
+### Give her other models
+
+```json
+"llm": {
+  "models": {
+    "fast": { "model": "a-small-model" },
+    "deep": { "model": "a-big-model", "base_url": "https://openrouter.ai/api/v1", "api_key_env": "OPENROUTER_API_KEY" }
+  },
+  "default": "fast",
+  "max_tokens": 4000
+}
+```
+
+She gets an `llm` tool that takes a self-contained `prompt` (and an optional `system`) and returns the other model's text. It sees nothing else: not her identity, her field, her history or her tools. Its spend is charged to her tick, so using it costs energy. She can pick a model per call or `set_default` for herself, and the choice survives restarts. A model inherits `base_url`, `api_key_env` and prices from `backend` unless it names its own. No models listed, no tool.
 
 ### Give her tasks
 
@@ -358,7 +391,9 @@ The Engine keeps her stable. The Loop gives her continuity of perception on top 
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `agent` / `system_prompt` | `"elysia"` / `""` | Who she is (or use `identity=` for retrieval) |
+| `agent` | `"agent"` | Her name |
+| `soul_script` / `system_prompt` | `""` / `""` | Who she is: a markdown file read fresh every tick, or an inline prompt (or use `identity=` for retrieval). Both empty is valid |
+| `timezone` | `"UTC"` | Your clock: "morning", the HUD's local time, and when her day (and energy) resets. Any IANA name |
 | `base_interval_seconds` | `120` | Cadence before energy and surprise adjust it |
 | `min_interval_seconds` / `max_interval_seconds` | `20` / `1800` | Cadence bounds |
 | `max_rest_minutes` | `240` | Longest rest she can choose |
@@ -366,6 +401,7 @@ The Engine keeps her stable. The Loop gives her continuity of perception on top 
 | `max_tokens_per_tick` | `30000` | One thought can't spend more than this |
 | `max_steps_per_tick` / `max_tool_calls_per_tick` | `4` / `12` | Per-tick limits |
 | `history_window` | `4` | Earlier ticks carried as conversation (the field is the real continuity) |
+| `quiet_gate` / `gate_max_skips` | `true` / `3` | Sleep through idle timer wakes with nothing new (no model call), at most this many in a row |
 | `capacity_chars` | `2400` | How much the field holds |
 | `capture_threshold` | `0.45` | Salience needed to pull her focus |
 | `embedder` | `"auto"` | `auto` / `minilm` (sentence-transformers) or `hash` |
@@ -373,9 +409,10 @@ The Engine keeps her stable. The Loop gives her continuity of perception on top 
 | `error_streak_limit` | `5` | Errors before stop |
 | `rumination_ticks` | `5` | Ticks on one focus without acting before her body notices |
 | `data_dir` / `workbench` | `"data"` / `true` | Storage; her making-space |
-| `machine` | `{"enabled": false}` | Her own Linux (bring your own): `url`, `token_env` (default `LOOP_MACHINE_TOKEN`) |
+| `machine` | `{"enabled": false}` | Her own Linux: `url`, `token_env` (default `LOOP_MACHINE_TOKEN`), `hud_url` (set it to put her HUD on the box) |
+| `llm` | `{}` | Side models she can call: `models`, `default`, `max_tokens`. Empty = no tool |
 | `sandbox` | `{"enabled": false}` | Docker sandbox for `run_python`: `image`, `timeout_seconds`, `memory`, `cpus`, `pids_limit` |
-| `backend` | — | `type` (`openai` \| `echo`), `base_url`, `model`, `api_key_env`, `temperature`, `price_in_per_mtok`, `price_out_per_mtok` |
+| `backend` | — | `type` (`openai` \| `echo`), `base_url`, `model`, `api_key_env`, `temperature`, `max_tokens`, `prompt_cache`, `price_in_per_mtok`, `price_out_per_mtok` |
 
 ---
 
@@ -410,14 +447,16 @@ soulscript_loop/
   tools.py       attend, reply, loop_control (+ workbench)
   workbench.py   her making-space and reflection log
   sandbox.py     Docker sandbox + run_python (opt-in, no host fallback)
-  machine.py     the linux tool: a slot for your own Linux box (opt-in)
+  machine.py     the linux tool and the HUD half of her machine (opt-in)
   budget.py      daily energy
   host.py        StandaloneHost + build_loop
   backend.py     OpenAI-compatible and offline echo backends
   registry.py    your tools
   config.py      LoopConfig
   __main__.py    CLI: talk to her while she runs
-tests/           the field, prediction, capture, capacity, mood, guards, wake-on-message, workbench + sandbox walls, the machine contract
+souls/           an empty template and one worked soul script (Codex Animus)
+machine/         a reference Linux box for her: server, Dockerfile, compose file, README
+tests/           the field, prediction, capture, capacity, mood, guards, wake-on-message, the gate, cache breakpoints, pace, the handoff letter, side models, workbench + sandbox walls, the machine contract and the reference box
 ```
 
 ---

@@ -14,10 +14,27 @@ class Completion:
     cost: float = 0.0
     model: str = ""
     tokens: int = 0                      # spent from the daily energy budget
+    prompt_tokens: int = 0
+    cached_tokens: int = 0               # prompt tokens the provider served from its prefix cache
 
 
 class Backend(Protocol):
     async def complete(self, messages: List[dict], tools: List[dict]) -> Completion: ...
+
+
+def wire_messages(messages: List[dict], prompt_cache: bool) -> List[dict]:
+    """The loop marks cache breakpoints with ``"cache": True`` on a message. No server wants that key,
+    so it is always stripped; with ``prompt_cache`` on it becomes ``cache_control`` on the message's last
+    text block (the form Claude and Gemini take through OpenRouter and compatible gateways)."""
+    out = []
+    for m in messages:
+        m = dict(m)
+        marked = m.pop("cache", False)
+        content = m.get("content")
+        if prompt_cache and marked and isinstance(content, str) and content:
+            m["content"] = [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
+        out.append(m)
+    return out
 
 
 class OpenAICompatibleBackend:
@@ -36,6 +53,8 @@ class OpenAICompatibleBackend:
         timeout: float = 120.0,
         price_in_per_mtok: float = 0.0,
         price_out_per_mtok: float = 0.0,
+        prompt_cache: bool = False,
+        max_tokens: int = 0,
     ):
         url = base_url.rstrip("/")
         if not url.endswith("/chat/completions"):
@@ -47,8 +66,10 @@ class OpenAICompatibleBackend:
         self.timeout = timeout
         self.price_in = price_in_per_mtok
         self.price_out = price_out_per_mtok
+        self.prompt_cache = prompt_cache
+        self.max_tokens = max_tokens
 
-    async def complete(self, messages: List[dict], tools: List[dict]) -> Completion:
+    async def complete(self, messages: List[dict], tools: List[dict], max_tokens: int = 0) -> Completion:
         import httpx
 
         headers = {"Content-Type": "application/json"}
@@ -56,9 +77,12 @@ class OpenAICompatibleBackend:
             headers["Authorization"] = f"Bearer {self.api_key}"
         payload: Dict[str, Any] = {
             "model": self.model,
-            "messages": messages,
+            "messages": wire_messages(messages, self.prompt_cache),
             "temperature": self.temperature,
         }
+        cap = max_tokens or self.max_tokens
+        if cap:
+            payload["max_tokens"] = cap
         if tools:
             payload["tools"] = tools
 
@@ -85,6 +109,8 @@ class OpenAICompatibleBackend:
             cost=cost,
             model=data.get("model", self.model),
             tokens=int(tokens),
+            prompt_tokens=int(usage.get("prompt_tokens") or 0),
+            cached_tokens=int((usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0),
         )
 
 
@@ -93,7 +119,7 @@ class EchoBackend:
 
     model = "echo"
 
-    async def complete(self, messages: List[dict], tools: List[dict]) -> Completion:
+    async def complete(self, messages: List[dict], tools: List[dict], max_tokens: int = 0) -> Completion:
         last = next((m for m in reversed(messages) if m.get("role") == "user"), {})
         lines = (last.get("content") or "").splitlines()
         focus = next((ln for ln in lines if ln.startswith("FOCUS")), lines[0] if lines else "")

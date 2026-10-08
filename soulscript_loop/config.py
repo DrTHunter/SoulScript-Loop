@@ -12,8 +12,10 @@ log = logging.getLogger(__name__)
 @dataclass
 class LoopConfig:
     # Identity
-    agent: str = "elysia"
-    system_prompt: str = ""
+    agent: str = "agent"
+    system_prompt: str = ""            # inline identity; ignored when soul_script is set
+    soul_script: str = ""              # path to a markdown file: her identity, loaded fresh every tick
+    timezone: str = "UTC"              # your clock: what "morning" means, the HUD's local time, when "today" ends
 
     # Wall-time cadence. Low energy slows it; surprise quickens it.
     base_interval_seconds: float = 120.0
@@ -30,6 +32,10 @@ class LoopConfig:
     max_steps_per_tick: int = 4        # model ↔ tool round trips
     max_tool_calls_per_tick: int = 12
     history_window: int = 4            # earlier ticks carried as conversation
+
+    # The quiet gate: a timer wake that finds nothing new after an idle tick is slept through, no model call.
+    quiet_gate: bool = True
+    gate_max_skips: int = 3            # quiet wakes in a row before one is let through anyway
 
     # The field
     capacity_chars: int = 2400         # how much the field can hold at once
@@ -48,6 +54,11 @@ class LoopConfig:
     workbench: bool = True
     sandbox: Dict[str, Any] = field(default_factory=lambda: {"enabled": False})
     machine: Dict[str, Any] = field(default_factory=lambda: {"enabled": False})
+    # The llm tool: a side call to another model she picks. Off until you list models:
+    #   {"models": {"fast": {"model": "…"}, "deep": {"model": "…", "base_url": "…", "api_key_env": "…"}},
+    #    "default": "fast", "max_tokens": 4000}
+    # A model inherits base_url / api_key_env / prices from `backend` unless it names its own.
+    llm: Dict[str, Any] = field(default_factory=dict)
     backend: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -83,6 +94,7 @@ class LoopConfig:
         out.base_interval_seconds = min(max(out.base_interval_seconds, out.min_interval_seconds), out.max_interval_seconds)
         out.capacity_chars = max(600, out.capacity_chars)
         out.max_steps_per_tick = max(1, out.max_steps_per_tick)
+        out.gate_max_skips = max(0, out.gate_max_skips)
         return out
 
     @classmethod

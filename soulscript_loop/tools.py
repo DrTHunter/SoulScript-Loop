@@ -57,20 +57,55 @@ CONTROL_DEF = {
     "name": "loop_control",
     "description": (
         "Your own running process. 'status' — how you're running. "
+        "'pace' (seconds, reason) — set how often you wake: go fast (down to the minimum) while something "
+        "is live, slow down when it isn't, as often as you like; pace with no seconds returns to your "
+        "adaptive rhythm. Low energy still slows you. "
         "'rest' (minutes, reason) — sleep longer than usual when nothing is worth spending energy on; "
         "a message at the door will still wake you. "
-        "'stop' (reason) — end the loop entirely. Prefer rest."
+        "'stop' (reason) — end the loop entirely. Prefer rest. "
+        "'gate' (on: true|false, reason) — the quiet gate. While it's on, a timer wake that finds nothing new "
+        "after a tick where you did nothing is slept through without a model call (a few in a row at most, and "
+        "never a message or a surprise). Turn it off when you want every wake, even quiet ones."
     ),
     "parameters": {
         "type": "object",
         "properties": {
-            "action": {"type": "string", "enum": ["status", "rest", "stop"]},
+            "action": {"type": "string", "enum": ["status", "pace", "rest", "stop", "gate"]},
+            "on": {"type": "boolean"},
             "minutes": {"type": "number"},
+            "seconds": {"type": "number"},
             "reason": {"type": "string"},
         },
         "required": ["action"],
     },
 }
+
+
+def llm_definition(models: List[str], default: str) -> dict:
+    return {
+        "name": "llm",
+        "description": (
+            "Hand a self-contained piece of work to another model: a summary, a draft, a classification, a "
+            "reformat, a first pass you'll check, a second opinion. It sees only what you put in 'prompt' (and "
+            "'system', if you give one), not your identity, field, history or tools, and returns its text to "
+            "you here. Its cost comes out of your energy. "
+            f"Models you can name: {', '.join(models)}. The default is {default}. "
+            "'set_default' changes which one you get when you don't name one; it keeps across restarts. "
+            "Your choice when and which; keep your own judgment for what needs you."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string", "description": "The whole task, with everything it needs."},
+                "model": {"type": "string", "enum": models,
+                          "description": f"Which model this time (else your default, {default})."},
+                "set_default": {"type": "string", "enum": models,
+                                "description": "Make this your default from now on. Can be sent without a prompt."},
+                "system": {"type": "string", "description": "Optional instructions for how it should answer."},
+                "max_tokens": {"type": "integer", "description": "Cap on its answer (the operator sets a ceiling)."},
+            },
+        },
+    }
 
 
 class LoopTools:
@@ -81,6 +116,11 @@ class LoopTools:
             "reply": (REPLY_DEF, self.reply),
             "loop_control": (CONTROL_DEF, self.control),
         }
+        models = list(((daemon.config.llm or {}).get("models") or {}))
+        if models:
+            # The daemon runs this one itself (it spends from the tick); the handler is never called directly.
+            self.handlers["llm"] = (llm_definition(models, (daemon.config.llm or {}).get("default") or models[0]),
+                                    lambda args: "Error: llm runs inside a tick.")
         if daemon.workbench:
             self.handlers["workbench"] = (daemon.workbench.definition(), daemon.workbench.execute)
 
@@ -205,8 +245,28 @@ class LoopTools:
         reason = (args.get("reason") or "").strip()
         if action == "status":
             s = self.d.status()
-            return json.dumps({k: s[k] for k in ("phase", "tick", "session_ticks", "session_tokens", "focus", "mood", "budget")},
+            return json.dumps({k: s[k] for k in ("phase", "tick", "session_ticks", "session_tokens", "focus", "mood", "budget", "pace")},
                               default=str)
+        if action == "pace":
+            if args.get("seconds") in (None, ""):
+                self.d.set_pace(None)
+                return "Back to your adaptive rhythm."
+            c = self.d.config
+            granted = self.d.set_pace(float(args["seconds"]), reason)
+            note = "" if granted == float(args["seconds"]) else \
+                f" (limits are {c.min_interval_seconds:.0f}s–{c.max_interval_seconds:.0f}s)"
+            return f"You'll wake about every {granted:.0f}s from now until you change it.{note}"
+        if action == "gate":
+            if not self.d.config.quiet_gate:
+                return "The quiet gate is switched off by the operator; every wake is a full thought."
+            on = args.get("on")
+            if on is None:
+                return f"The quiet gate is {'on' if self.d.gate_on else 'off'}."
+            on = on if isinstance(on, bool) else str(on).lower() in ("1", "true", "yes", "on")
+            self.d.gate_on = on
+            self.d.event("gate", f"gate {'on' if on else 'off'}" + (f" — {reason}" if reason else ""))
+            return ("Gate on: quiet wakes after an idle tick will be slept through." if on
+                    else "Gate off: every wake is a full thought, quiet or not.")
         if action == "rest":
             minutes = float(args.get("minutes") or 30)
             granted = self.d.request_rest(minutes, reason or "chose to rest")

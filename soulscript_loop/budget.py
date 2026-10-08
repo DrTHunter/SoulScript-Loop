@@ -8,16 +8,26 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 
-def _today() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+def _zone(name: str = "UTC"):
+    """Your time zone (so "today" ends at your midnight, not UTC's); UTC if unknown."""
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(name or "UTC")
+    except Exception:
+        return timezone.utc
+
+
+def _today(tz: str = "UTC") -> str:
+    return datetime.now(_zone(tz)).strftime("%Y-%m-%d")
 
 
 class DailyBudget:
-    def __init__(self, path: Path, tokens_per_day: int, cost_per_day: float = 0.0):
+    def __init__(self, path: Path, tokens_per_day: int, cost_per_day: float = 0.0, tz: str = "UTC"):
         self.path = Path(path)
+        self.tz = tz or "UTC"
         self.tokens_per_day = max(1, int(tokens_per_day))
         self.cost_per_day = float(cost_per_day or 0.0)
-        self.day = _today()
+        self.day = _today(self.tz)
         self.tokens = 0
         self.cost = 0.0
         self.ticks = 0
@@ -41,7 +51,7 @@ class DailyBudget:
                                          "cost": round(self.cost, 6), "ticks": self.ticks}), encoding="utf-8")
 
     def _roll(self):
-        today = _today()
+        today = _today(self.tz)
         if today != self.day:
             self.day, self.tokens, self.cost, self.ticks = today, 0, 0.0, 0
             self._save()
@@ -71,11 +81,13 @@ class DailyBudget:
     def exhausted(self) -> bool:
         return self.energy <= 0.0
 
-    @staticmethod
-    def seconds_until_reset() -> float:
-        now = datetime.now(timezone.utc)
-        tomorrow = (now + timedelta(days=1)).replace(hour=0, minute=0, second=5, microsecond=0)
-        return (tomorrow - now).total_seconds()
+    def seconds_until_reset(self) -> float:
+        """Until 00:00:05 tomorrow in the budget's time zone (DST-safe: built from the local date)."""
+        zone = _zone(self.tz)
+        now = datetime.now(zone)
+        nxt = now.date() + timedelta(days=1)
+        tomorrow = datetime(nxt.year, nxt.month, nxt.day, 0, 0, 5, tzinfo=zone)
+        return max(0.0, (tomorrow - now).total_seconds())
 
     def to_dict(self) -> dict:
         self._roll()

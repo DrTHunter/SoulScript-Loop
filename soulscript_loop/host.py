@@ -6,16 +6,20 @@ retrieved) system prompt, any OpenAI-compatible backend, and a ToolRegistry.
 """
 
 import asyncio
+import logging
+import os
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
-from .backend import Backend, Completion, backend_from_config
+from .backend import Backend, Completion, OpenAICompatibleBackend, backend_from_config
 from .config import LoopConfig
 from .daemon import LoopDaemon
 from .embedding import Embedder, HashEmbedder, SentenceEmbedder
 from .machine import machine_from_config
 from .registry import ToolRegistry
 from .sandbox import RunPythonTool, sandbox_from_config
+
+log = logging.getLogger(__name__)
 
 # (agent, current view) -> system prompt. Plug SoulScript Engine retrieval in here
 # to re-anchor identity every tick with the soul-script sections relevant to what she sees.
@@ -36,10 +40,37 @@ class StandaloneHost:
         self.tools = tools or ToolRegistry()
         self.identity = identity
         self.tasks = tasks
+        self._side: dict = {}
+
+    def soul(self) -> str:
+        """Her identity. A retrieval function wins; then the soul_script file (read fresh every tick, so
+        you can edit her while she runs); then the inline system_prompt. All empty is a valid answer: she
+        is then only the loop."""
+        path = (self.config.soul_script or "").strip()
+        if path:
+            try:
+                return Path(path).expanduser().read_text(encoding="utf-8").strip()
+            except OSError as exc:
+                log.warning("[loop] soul_script %s unreadable: %s", path, exc)
+        return self.config.system_prompt or ""
 
     def prepare(self, agent: str, view: str) -> Tuple[List[dict], List[dict]]:
-        prompt = self.identity(agent, view) if self.identity else self.config.system_prompt
+        prompt = self.identity(agent, view) if self.identity else self.soul()
         return [{"role": "system", "content": prompt or ""}], self.tools.definitions()
+
+    async def side_complete(self, name: str, messages: List[dict], max_tokens: int) -> Completion:
+        """The llm tool's model: its own settings, falling back to the main backend's connection."""
+        models = (self.config.llm or {}).get("models") or {}
+        spec = models[name]
+        if name not in self._side:
+            main = self.config.backend or {}
+            opts = {k: main[k] for k in ("base_url", "temperature", "price_in_per_mtok", "price_out_per_mtok",
+                                         "prompt_cache") if k in main}
+            opts.update({k: v for k, v in spec.items() if k not in ("model", "api_key_env")})
+            key_env = spec.get("api_key_env") or main.get("api_key_env")
+            self._side[name] = OpenAICompatibleBackend(
+                model=spec["model"], api_key=os.environ.get(key_env) if key_env else None, **opts)
+        return await self._side[name].complete(messages, [], max_tokens)
 
     async def complete(self, config: LoopConfig, messages: List[dict], tools: List[dict]) -> Completion:
         return await self.backend.complete(messages, tools)
@@ -80,7 +111,9 @@ def build_loop(
     if machine:
         machine.register(tools)
     host = StandaloneHost(config, backend or backend_from_config(config.backend), tools, identity, tasks)
-    return LoopDaemon(host, config, Path(config.data_dir), embedder=embedder or make_embedder(config.embedder))
+    daemon = LoopDaemon(host, config, Path(config.data_dir), embedder=embedder or make_embedder(config.embedder))
+    daemon.machine = machine
+    return daemon
 
 
 __all__ = ["IdentityBuilder", "StandaloneHost", "build_loop", "make_embedder"]
