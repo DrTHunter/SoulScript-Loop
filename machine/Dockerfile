@@ -3,7 +3,7 @@ FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         sudo ca-certificates curl wget git nano vim less tmux htop jq ripgrep unzip zip sqlite3 \
-        build-essential python3 python3-pip python3-venv nodejs npm iproute2 iputils-ping dnsutils \
+        build-essential python3 python3-pip python3-venv nodejs npm iproute2 iputils-ping dnsutils tini \
     && rm -rf /var/lib/apt/lists/*
 
 # Who she is on this machine. Build with --build-arg AGENT_USER=name to rename her.
@@ -26,4 +26,6 @@ RUN chmod +x /opt/machine/start.sh
 
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8080
+# tini is PID 1 so the processes she leaves behind are reaped instead of piling up as zombies.
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["/opt/machine/start.sh"]
