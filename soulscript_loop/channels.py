@@ -13,7 +13,7 @@ from typing import Callable, Dict, List, Optional
 from .budget import DailyBudget
 from .prediction import fmt_quantity
 from .workbench import Workbench
-from .world import InnerWorld, _clip, fmt_age
+from .world import InnerWorld, _clip, fmt_age, local_dt
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +43,7 @@ class ChannelContext:
     stale_streak: int = 0
     stale_limit: int = 3
     rumination_ticks: int = 5
+    tz: str = "UTC"
 
 
 Channel = Callable[[ChannelContext], Optional[Signal]]
@@ -59,10 +60,10 @@ def part_of_day(hour: int) -> str:
 
 
 def time_channel(ctx: ChannelContext) -> Signal:
-    dt = datetime.fromtimestamp(ctx.now, timezone.utc)
+    dt = local_dt(ctx.now, ctx.tz)
     pod = part_of_day(dt.hour)
     gap = ctx.now - ctx.last_tick_at if ctx.last_tick_at else None
-    text = f"{pod} light · {dt:%H:%M} UTC · " + (f"{fmt_age(gap)} since you last looked" if gap else "you just woke")
+    text = f"{pod} light · {dt:%H:%M %Z} · " + (f"{fmt_age(gap)} since you last looked" if gap else "you just woke")
     sig = Signal("time", reading=text)
     sig.items.append(dict(key="time", kind="time", source="time", text=text, gist=f"{pod}, {dt:%H:%M}",
                           salience=0.2, valence=0.0, mode="level", anchor=True, meta={"trace": f"{pod} light"}))

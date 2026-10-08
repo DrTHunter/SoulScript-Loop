@@ -1,0 +1,34 @@
+# A machine for one persona. Set MACHINE_TOKEN first (any long random string), then:
+#   docker compose up -d --build
+# and point the loop at it:
+#   "machine": { "enabled": true, "url": "http://localhost:8080", "hud_url": "http://localhost:8080",
+#                "token_env": "MACHINE_TOKEN" }
+services:
+  machine:
+    build:
+      context: .
+      args:
+        AGENT_USER: agent
+        AGENT_SUDO: "0"          # "1" gives her passwordless sudo inside the container
+    environment:
+      MACHINE_TOKEN: ${MACHINE_TOKEN:?set MACHINE_TOKEN to a long random string}
+    ports:
+      - "127.0.0.1:8080:8080"    # localhost only. Never publish this on a public address.
+    volumes:
+      - home:/home/agent
+      - hud:/var/hud
+      - logs:/var/log/machine
+    restart: unless-stopped
+    # Fences for a box you've handed to a mind.
+    mem_limit: 2g
+    cpus: 2
+    pids_limit: 512
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID, KILL]
+    security_opt:
+      - no-new-privileges:true   # with AGENT_SUDO=1 remove this line, or sudo won't work
+
+volumes:
+  home:
+  hud:
+  logs:

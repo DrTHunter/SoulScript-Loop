@@ -1,41 +1,44 @@
 {
-  "agent": "codex_animus",
-  "soul_script": "souls/codex_animus.md",
+  "agent": "mine",
+  "soul_script": "souls/TEMPLATE.md",
   "system_prompt": "",
   "timezone": "UTC",
-
   "base_interval_seconds": 120,
   "min_interval_seconds": 20,
   "max_interval_seconds": 1800,
   "max_rest_minutes": 240,
-
   "daily_token_budget": 200000,
-  "daily_cost_cap": 2.00,
+  "daily_cost_cap": 2.0,
   "max_tokens_per_tick": 30000,
-
   "max_steps_per_tick": 4,
   "max_tool_calls_per_tick": 12,
   "history_window": 4,
-
   "quiet_gate": true,
   "gate_max_skips": 3,
-
   "capacity_chars": 2400,
   "capture_threshold": 0.45,
   "embedder": "auto",
-
   "stale_streak_limit": 3,
   "guard_rest_minutes": 30,
   "max_guard_rests": 3,
   "error_streak_limit": 5,
   "rumination_ticks": 5,
-
-  "data_dir": "data",
+  "data_dir": "data-blank",
   "workbench": true,
-  "sandbox": { "enabled": false, "image": "python:3.12-slim", "timeout_seconds": 30, "memory": "256m", "cpus": "0.5" },
-  "machine": { "enabled": false, "url": "http://localhost:8080", "hud_url": "http://localhost:8080", "token_env": "MACHINE_TOKEN" },
+  "sandbox": {
+    "enabled": false,
+    "image": "python:3.12-slim",
+    "timeout_seconds": 30,
+    "memory": "256m",
+    "cpus": "0.5"
+  },
+  "machine": {
+    "enabled": false,
+    "url": "http://localhost:8080",
+    "hud_url": "http://localhost:8080",
+    "token_env": "MACHINE_TOKEN"
+  },
   "llm": {},
-
   "backend": {
     "type": "openai",
     "base_url": "http://localhost:11434/v1",

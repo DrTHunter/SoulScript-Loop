@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "soulscript-loop"
-version = "0.2.0"
+version = "0.3.0"
 description = "A continuously running perceptual field for one AI persona — senses it can't author, predictions that can break, attention that can be pulled, and a budget it can run out of."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "AGPL-3.0-only OR LicenseRef-OrionForge-Commercial" }
 authors = [{ name = "Trent Hunter (DrTHunter)" }]
-dependencies = ["httpx>=0.25"]
+dependencies = ["httpx>=0.25", "tzdata; platform_system == 'Windows'"]
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]

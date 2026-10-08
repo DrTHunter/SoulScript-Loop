@@ -31,7 +31,7 @@ from .config import LoopConfig
 from .tools import LoopTools
 from .workbench import Workbench
 from .embedding import Embedder, HashEmbedder
-from .world import InnerWorld, Item, _clip, fmt_age
+from .world import InnerWorld, Item, _clip, fmt_age, local_dt
 
 log = logging.getLogger(__name__)
 
@@ -64,7 +64,12 @@ How to act:
 - reply — answer someone waiting at the door.
 - workbench — make things.
 - linux — your own machine, if you have one: run commands, install, build, keep things running.
-- loop_control — rest when nothing is worth the energy (a message still wakes you), or stop.
+- llm — hand a self-contained piece of work to another model, if you have that tool. Its cost comes out of your energy.
+- loop_control — set your own pace (wake fast while something is live, slow when it isn't), rest when nothing is worth the energy (a message still wakes you), or stop.
+
+The ⏲ clock line under the HUD is measured by the host, not felt: the wall time now, when your last tick began, how long it ran, and how long you actually slept against what was planned. When you say what time it is or when something happened, read it off that line; never estimate a time from how long things felt. Order your own records by tick.
+
+You can be restarted under your field. Your field, bench and notes survive; the thought you were in the middle of does not. A letter you leave on your bench at handoff/letter.md is the first thing the next you is shown. Write it in your own words before a restart, if you can.
 
 Energy is finite; every thought spends today's budget. Don't describe your field back. See through it: briefly say what you're doing and why, then do it."""
 
@@ -138,7 +143,9 @@ class LoopDaemon:
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.world = self._load_world()
-        self.budget = DailyBudget(self.data_dir / "budget.json", config.daily_token_budget, config.daily_cost_cap)
+        self.world.tz = config.timezone
+        self.budget = DailyBudget(self.data_dir / "budget.json", config.daily_token_budget, config.daily_cost_cap,
+                                  tz=config.timezone)
         self.workbench = Workbench(self.data_dir / "workbench") if config.workbench else None
         self.channels = list(DEFAULT_CHANNELS)
         self.tools = LoopTools(self)
@@ -181,6 +188,21 @@ class LoopDaemon:
         self.last_tick_at: Optional[float] = saved.get("last_tick_at")
         self.last_result: dict = saved.get("last_result", {})
         self.queue: List[dict] = saved.get("queue", [])
+        self.pace: Optional[Tuple[float, str]] = None   # her own chosen wake interval (seconds, why); None = adaptive
+        if saved.get("pace"):
+            self.pace = (float(saved["pace"][0]), str(saved["pace"][1]))
+        self.pace_note = ""
+        self.gate_on: bool = saved.get("gate_on", True) is not False   # her own switch for the quiet gate
+        self.llm_choice: str = saved.get("llm_choice") or ""            # her own default for the llm tool
+        self.handoff_seen: dict = saved.get("handoff_seen") or {}       # the letter already shown after a restart
+        self.gated_streak = 0      # quiet wakes slept through since the last thought
+        self.gate_note = ""
+        self.last_sleep: Optional[dict] = None
+        self._side_spend = {"tokens": 0, "cost": 0.0}
+        self.session_prompt_tokens = self.session_cached_tokens = 0
+        self.control_seq = int(saved.get("control_seq") or 0)
+        self.control_ack: dict = {}
+        self.machine = None   # set by build_loop when her machine is on: HUD out, hud-control.json in
         self.history: List[dict] = [{"view": t.get("view_head", ""), "response": t.get("response", "")}
                                     for t in self.ticks.tail(config.history_window)]
 
@@ -210,7 +232,9 @@ class LoopDaemon:
         try:
             self._write_json("world.json", self.world.to_dict())
             self._write_json("state.json", {"last_tick_at": self.last_tick_at, "last_result": self.last_result,
-                                            "queue": self.queue})
+                                            "queue": self.queue, "pace": list(self.pace) if self.pace else None,
+                                            "gate_on": self.gate_on, "llm_choice": self.llm_choice,
+                                            "handoff_seen": self.handoff_seen, "control_seq": self.control_seq})
         except OSError as exc:
             log.warning("[loop] save failed: %s", exc)
 
@@ -220,6 +244,8 @@ class LoopDaemon:
         self.world.capture_threshold = config.capture_threshold
         self.budget.tokens_per_day = max(1, config.daily_token_budget)
         self.budget.cost_per_day = config.daily_cost_cap
+        self.budget.tz = config.timezone or "UTC"
+        self.world.tz = config.timezone
 
     def reset_world(self):
         if self.running:
@@ -275,6 +301,18 @@ class LoopDaemon:
         minutes = max(1.0, min(self.config.max_rest_minutes, minutes))
         self.rest_request = (minutes * 60, reason)
         return minutes
+
+    def set_pace(self, seconds: Optional[float], reason: str = "") -> Optional[float]:
+        """Her own wake interval, within the operator's limits. None returns to the adaptive rhythm."""
+        if seconds is None:
+            self.pace = None
+            self.event("pace", "back to the adaptive rhythm")
+            return None
+        c = self.config
+        seconds = max(c.min_interval_seconds, min(c.max_interval_seconds, float(seconds)))
+        self.pace = (seconds, reason or "chose a pace")
+        self.event("pace", f"waking every {seconds:.0f}s — {self.pace[1]}")
+        return seconds
 
     def post_message(self, text: str, sender: str = "operator") -> dict:
         msg = {"id": uuid.uuid4().hex[:10], "ts": _iso(), "sender": sender, "text": text.strip()[:4000]}
@@ -339,6 +377,11 @@ class LoopDaemon:
             "mood": w.mood, "budget": self.budget.to_dict(),
             "capacity": {"used": w.used(time.time()), "of": w.capacity},
             "queue": len(self.queue), "waiting": len(waiting),
+            "pace": {"seconds": self.pace[0], "reason": self.pace[1]} if self.pace else None,
+            "gate": {"on": self.config.quiet_gate and self.gate_on, "skipped_in_a_row": self.gated_streak},
+            "session_cache": {"prompt_tokens": self.session_prompt_tokens, "cached_tokens": self.session_cached_tokens,
+                              "hit_rate": round(self.session_cached_tokens / self.session_prompt_tokens, 3)
+                              if self.session_prompt_tokens else None},
             "agent": self.config.agent, "model": self.config.backend.get("model", "") or "(backend default)",
             "processes": [self.processes[s] for s in STAGES],
             "channels": self.channel_status,
@@ -353,8 +396,10 @@ class LoopDaemon:
         self.session_ticks = self.session_tokens = self.guard_rests = 0
         self.session_cost = 0.0
         self.error_streak = self.stale_streak = 0
+        self.session_prompt_tokens = self.session_cached_tokens = 0
         self.wake_reason = "start"
         self.event("start", f"{self.config.agent} woke")
+        self._admit_handoff()
         try:
             while self.running:
                 if self.paused:
@@ -393,6 +438,53 @@ class LoopDaemon:
             self.event("stop", self.stop_reason or "stopped")
             self.save()
 
+    # Where a letter to the next instance can live: the conventional path first, then any file on the
+    # bench that names itself a handoff letter.
+    HANDOFF_PATTERNS = ("handoff/letter.md", "**/handoff-letter*.md", "**/HANDOFF*.md")
+
+    def _find_handoff(self) -> Optional[Path]:
+        if not self.workbench:
+            return None
+        root = Path(self.workbench.root)
+        found = [p for pat in self.HANDOFF_PATTERNS for p in root.glob(pat) if p.is_file()]
+        return max(found, key=lambda p: p.stat().st_mtime) if found else None
+
+    def _admit_handoff(self):
+        """After a restart, the newest letter from the previous instance is the first thing in view: held,
+        focused, and quoted in her own words, never summarized for her. A letter is shown that way once;
+        if it was already read after an earlier restart she's told so instead of being handed an old
+        letter as if it were about this gap."""
+        if not self.last_tick_at:
+            return   # first life: nobody wrote a letter
+        path = self._find_handoff()
+        if not path:
+            return
+        mtime = path.stat().st_mtime
+        if mtime < self.last_tick_at - 7 * 86400:
+            return   # too old to be about this gap
+        rel = path.relative_to(Path(self.workbench.root)).as_posix()
+        written = local_dt(mtime, self.config.timezone).strftime("%a %d %b %H:%M %Z")
+        if self.handoff_seen.get("path") == rel and self.handoff_seen.get("mtime") == mtime:
+            it, _ = self.world.upsert("handoff-letter", "note", "self",
+                                      f"You didn't leave a new letter before this restart. Your newest one ({rel}, "
+                                      f"written {written}) was already read after an earlier restart.",
+                                      gist="no new letter", salience=0.4, valence=0.0)
+            it.held = False
+            self.event("handoff", f"no new letter; {rel} was already read")
+            return
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            return
+        self.handoff_seen = {"path": rel, "mtime": mtime}
+        body = text[:3000] + (f"\n… (the rest: workbench read {rel})" if len(text) > 3000 else "")
+        it, _ = self.world.upsert("handoff-letter", "note", "self",
+                                  f"A letter you left yourself before the restart ({rel}, written {written}):\n\n{body}",
+                                  gist=f"your letter: {rel}", salience=0.95, valence=0.1)
+        self.world.hold(it)
+        self.world.move(item_id=it.id)
+        self.event("handoff", f"shown the letter first: {rel}")
+
     async def _wait(self, timeout: float) -> Optional[str]:
         try:
             await asyncio.wait_for(self._wake.wait(), timeout=max(0.0, timeout))
@@ -408,12 +500,20 @@ class LoopDaemon:
             self.rest_request = None
             return secs, reason
         c = self.config
-        secs = c.base_interval_seconds
+        chosen = self.pace[0] if self.pace else c.base_interval_seconds
+        secs, why = chosen, []
         energy = self.budget.energy
         if energy < 0.5:
-            secs *= 1 + (0.5 - energy) * 4
-        secs /= 1 + self.world.arousal * 1.5
-        return max(c.min_interval_seconds, min(c.max_interval_seconds, secs)), None
+            secs *= 1 + (0.5 - energy) * 4   # low energy slows even a chosen pace
+            why.append(f"energy {energy * 100:.0f}% slows it")
+        if not self.pace:
+            secs /= 1 + self.world.arousal * 1.5
+            if self.world.arousal > 0.2:
+                why.append("surprise quickens it")
+        secs = max(c.min_interval_seconds, min(c.max_interval_seconds, secs))
+        base = f"you chose {fmt_age(chosen)}" if self.pace else f"adaptive, base {fmt_age(chosen)}"
+        self.pace_note = f"pace: {base}" + (f"; {', '.join(why)} → {fmt_age(secs)}" if why else "")
+        return secs, None
 
     async def _sleep(self, seconds: float, rest_reason: Optional[str] = None, wake_on_message: bool = True):
         self.resting = rest_reason
@@ -421,7 +521,8 @@ class LoopDaemon:
             self.event("rest", f"resting {seconds / 60:.0f}m — {rest_reason}")
         if self.phase != "exhausted":
             self.phase = "resting" if rest_reason else "sleeping"
-        self.next_wake_at = time.time() + seconds
+        slept_from = time.time()
+        self.next_wake_at = slept_from + seconds
         with self._stage("sleep") as p:
             reason = "timer"
             while self.running and not self.paused:
@@ -437,6 +538,7 @@ class LoopDaemon:
                     break
             p["note"] = f"woke: {reason}"
         self.wake_reason = ("rest_" + reason) if rest_reason else reason
+        self.last_sleep = {"planned": seconds, "slept": time.time() - slept_from, "reason": reason}
         if reason == "message":
             self.event("wake", "a message at the door woke you" + (" from rest" if rest_reason else ""))
         self.next_wake_at = None
@@ -457,11 +559,34 @@ class LoopDaemon:
             return "You were nudged awake."
         return f"You woke on your own after {fmt_age(gap or 0)}." if gap else "You woke on your own."
 
+    def _clock_line(self, now: float, gap: Optional[float]) -> str:
+        """Timing measured on the host's wall clock. The tick counter orders; this stamps."""
+        tz = self.config.timezone
+        parts = [f"⏲ now {local_dt(now, tz):%H:%M:%S %Z} = {datetime.fromtimestamp(now, timezone.utc):%H:%M:%S} UTC"]
+        if self.last_tick_at and gap is not None:
+            prev = f"tick {self.world.tick - 1} began {local_dt(self.last_tick_at, tz):%H:%M:%S %Z} ({fmt_age(gap)} ago)"
+            took = self.last_result.get("took")
+            if took is not None:
+                prev += f" and ran {fmt_age(took)}"
+            parts.append(prev)
+        sl = self.last_sleep
+        if sl and self.wake_reason != "start":
+            slept = f"slept {fmt_age(sl['slept'])} of {fmt_age(sl['planned'])} planned"
+            if sl["reason"] == "message":
+                slept += ", a message woke you early"
+            elif sl["slept"] > sl["planned"] + 60:
+                slept += f", {fmt_age(sl['slept'] - sl['planned'])} late"
+            parts.append(slept)
+        return " · ".join(parts)
+
     async def tick(self):
         c, w = self.config, self.world
         now = time.time()
         w.begin(w.tick + 1)
         gap = now - self.last_tick_at if self.last_tick_at else None
+
+        if self.machine is not None and self.machine.hud_url:
+            await self._apply_control()
 
         with self._stage("sense") as p:
             new_msgs, self.queue = list(self.queue), []
@@ -474,6 +599,7 @@ class LoopDaemon:
                 now=now, tick=w.tick, world=w, budget=self.budget, last_tick_at=self.last_tick_at,
                 last=self.last_result, new_messages=new_msgs, pending_tasks=tasks, workbench=self.workbench,
                 stale_streak=self.stale_streak, stale_limit=c.stale_streak_limit, rumination_ticks=c.rumination_ticks,
+                tz=c.timezone,
             )
             signals: List[Signal] = []
             for ch in self.channels:
@@ -531,10 +657,21 @@ class LoopDaemon:
             mood = w.compute_mood(self.budget.energy, now)
             p["note"] = mood["word"]
 
+        why_not = self._gate_check(new_msgs)
+        if why_not is None:
+            self._doze(now)
+            return
+        self.gate_note = why_not
+
         with self._stage("render") as p:
-            header = {"part_of_day": part_of_day(datetime.fromtimestamp(now, timezone.utc).hour),
-                      "woke": self._woke_line(gap), "energy": self.budget.energy,
-                      "tokens_left": f"{self.budget.tokens_left:,}"}
+            woke = self._woke_line(gap)
+            if self.gated_streak:
+                woke += (f" Before this you slept through {self.gated_streak} quiet wake(s) with no model call "
+                         f"(the gate; loop_control gate turns it off); this one came through: {self.gate_note}.")
+            header = {"part_of_day": part_of_day(local_dt(now, c.timezone).hour),
+                      "woke": woke, "energy": self.budget.energy,
+                      "tokens_left": f"{self.budget.tokens_left:,}",
+                      "clock": self._clock_line(now, gap), "pace": self.pace_note}
             view = w.render(now, header)
             p["note"] = f"{len(view)} chars"
 
@@ -574,10 +711,14 @@ class LoopDaemon:
         with self._stage("record"):
             self.budget.spend(result.get("tokens", 0), result.get("cost", 0.0))
             self.session_ticks += 1
+            self.gated_streak = 0
+            self.session_prompt_tokens += result.get("prompt_tokens", 0)
+            self.session_cached_tokens += result.get("cached_tokens", 0)
             self.session_tokens += result.get("tokens", 0)
             self.session_cost += result.get("cost", 0.0)
             self.last_tick_at = now
             self.last_result = {
+                "took": round(time.time() - now, 2),   # the whole tick, wall time, not just the model call
                 "tokens": result.get("tokens", 0), "latency": result.get("latency", 0.0),
                 "error": result.get("error"),
                 "tools": [{"tool": t["tool"], "ok": t["ok"]} for t in result.get("tool_calls", [])],
@@ -585,7 +726,11 @@ class LoopDaemon:
             view_head = "\n".join(view.splitlines()[:3])
             if result.get("response"):
                 self.history.append({"view": view_head, "response": result["response"][:2000]})
-                self.history = self.history[-max(1, c.history_window):]
+                # Append-only until it doubles, then cut back: a window sliding by one every tick
+                # would change the prefix every tick and nothing past the system prompt would cache.
+                keep = max(1, c.history_window)
+                if len(self.history) > 2 * keep:
+                    self.history = self.history[-keep:]
             entry = {
                 "tick": w.tick, "time": _iso(now), "agent": c.agent, "model": result.get("model", ""),
                 "wake": self.wake_reason, "focus": w.focus_label(), "mood": w.mood.get("word"),
@@ -593,6 +738,7 @@ class LoopDaemon:
                 "response": (result.get("response") or "")[:5000],
                 "tool_calls": result.get("tool_calls", []),
                 "tokens": result.get("tokens", 0), "cost": round(result.get("cost", 0.0), 6),
+                "prompt_tokens": result.get("prompt_tokens", 0), "cached_tokens": result.get("cached_tokens", 0),
                 "latency": round(result.get("latency", 0.0), 2), "steps": result.get("steps", 0),
                 "error": result.get("error"),
                 "surprises": w.surprises, "pulled": w.pulled, "faded": w.faded,
@@ -611,12 +757,51 @@ class LoopDaemon:
             for g in w.faded:
                 self.event("fade", g)
             self.save()
+            if self.machine is not None and self.machine.hud_url:
+                self._push_hud(view, now)
+
+    # ── The quiet gate ────────────────────────────────────────────
+
+    def _gate_check(self, new_msgs: List[dict]) -> Optional[str]:
+        """None if this wake should be slept through; otherwise why it wasn't (or "" if the gate is off).
+        Only a timer wake after an idle tick, with nothing new in the field, is gated, and only a few
+        in a row. A message, a task, a surprise or a pull always gets a thought."""
+        c, w = self.config, self.world
+        if not (c.quiet_gate and self.gate_on):
+            return ""
+        if self.wake_reason not in ("timer", "rest_timer"):
+            return "you were woken"
+        if new_msgs or w.surprises or w.pulled:
+            return "something new arrived"
+        if any(i.kind in ("message", "task") and not i.resolved for i in w.items.values()):
+            return "someone is waiting"
+        last = self.last_result or {}
+        if last.get("error") or (last.get("tools") and not last.get("gated")):
+            return "your last tick acted"
+        if self.gated_streak >= c.gate_max_skips:
+            return f"{self.gated_streak} quiet wakes in a row is the most it sleeps through"
+        return None
+
+    def _doze(self, now: float):
+        """A gated wake: time passed in the field, nothing was spent, no model was called."""
+        w = self.world
+        self.gated_streak += 1
+        self.last_tick_at = now
+        self.last_result = {"gated": True, "took": round(time.time() - now, 2), "tokens": 0, "tools": [],
+                            "error": None, "latency": 0.0}
+        self.processes["think"]["note"] = f"gated: quiet wake {self.gated_streak}"
+        self.ticks.append({"tick": w.tick, "time": _iso(now), "agent": self.config.agent, "gated": True,
+                           "wake": self.wake_reason, "focus": w.focus_label(), "mood": w.mood.get("word"),
+                           "tokens": 0, "cost": 0.0})
+        self.event("gate", f"quiet wake {self.gated_streak} slept through — nothing new, no model call")
+        self.save()
 
     async def _think(self, view: str) -> dict:
         c = self.config
         result: Dict[str, Any] = {"response": "", "tool_calls": [], "tokens": 0, "cost": 0.0,
-                                  "model": "", "latency": 0.0, "steps": 0}
+                                  "model": "", "latency": 0.0, "steps": 0, "prompt_tokens": 0, "cached_tokens": 0}
         t0 = time.perf_counter()
+        self._side_spend = {"tokens": 0, "cost": 0.0}
         with self._stage("think") as p:
             try:
                 system, registry_tools = await asyncio.to_thread(self.host.prepare, c.agent, view)
@@ -626,11 +811,18 @@ class LoopDaemon:
                 tool_defs = [t for t in registry_tools
                              if t["function"]["name"] not in EXCLUDED_TOOLS | own] + self.tools.definitions()
 
+                # Cache breakpoints (the backend turns "cache": True into its provider's form, or drops it):
+                # the end of the stable system, the end of the carried history (append-only between
+                # trims, so last tick's prefix is still a prefix), and this moment, so later steps of
+                # this tick reread it from cache.
+                system[-1]["cache"] = True
                 messages: List[dict] = list(system)
-                for h in self.history[-c.history_window:] if c.history_window > 0 else []:
+                for h in self.history if c.history_window > 0 else []:
                     messages += [{"role": "user", "content": h["view"] or "(an earlier moment)"},
                                  {"role": "assistant", "content": h["response"]}]
-                messages.append({"role": "user", "content": view})
+                if len(messages) > len(system):
+                    messages[-1] = dict(messages[-1], cache=True)
+                messages.append({"role": "user", "content": view, "cache": True})
 
                 calls = 0
                 for step in range(c.max_steps_per_tick + 1):
@@ -638,6 +830,8 @@ class LoopDaemon:
                     result["steps"] = step + 1
                     result["tokens"] += comp.tokens
                     result["cost"] += comp.cost
+                    result["prompt_tokens"] += getattr(comp, "prompt_tokens", 0) or 0
+                    result["cached_tokens"] += getattr(comp, "cached_tokens", 0) or 0
                     result["model"] = comp.model or result["model"]
                     msg = comp.message or {}
                     tcs = msg.get("tool_calls") or []
@@ -674,15 +868,139 @@ class LoopDaemon:
                 p["errors"] += 1
         if result.get("error"):
             self.processes["think"]["status"] = "error"
+        result["tokens"] += self._side_spend["tokens"]
+        result["cost"] += self._side_spend["cost"]
         result["latency"] = time.perf_counter() - t0
         return result
+
+    # ── The llm tool: a side call to a model she picks ───────────
+
+    def llm_default(self) -> str:
+        """Her own choice if she made one, else the operator's, else the first listed."""
+        models = (self.config.llm or {}).get("models") or {}
+        for pick in (self.llm_choice, (self.config.llm or {}).get("default")):
+            if pick in models:
+                return pick
+        return next(iter(models), "")
+
+    async def side_llm(self, args: dict) -> str:
+        """One completion on the model she chose, with only what she handed over: no identity, field,
+        history or tools. Its spend is added to this tick's."""
+        cfg = self.config.llm or {}
+        models = cfg.get("models") or {}
+        prompt = (args.get("prompt") or "").strip()
+        new_default = (args.get("set_default") or "").strip()
+        if new_default:
+            if new_default not in models:
+                return f"Error: no model '{new_default}'. Choose one of: {', '.join(models)}."
+            self.llm_choice = new_default
+            self.event("llm", f"default is now {new_default}")
+            if not prompt:
+                return f"Your llm default is now {new_default}. It stays until you change it."
+        if not prompt:
+            return "Error: llm needs a prompt with the whole task in it."
+        choice = (args.get("model") or self.llm_default() or "").strip()
+        if choice not in models:
+            return f"Error: no model '{choice}'. Choose one of: {', '.join(models)}."
+        ceiling = int(cfg.get("max_tokens") or 4000)
+        try:
+            cap = max(64, min(ceiling, int(args.get("max_tokens") or ceiling)))
+        except (TypeError, ValueError):
+            cap = ceiling
+        messages = ([{"role": "system", "content": args["system"]}] if (args.get("system") or "").strip() else []) \
+            + [{"role": "user", "content": prompt}]
+        comp = await self.host.side_complete(choice, messages, cap)
+        self._side_spend["tokens"] += comp.tokens
+        self._side_spend["cost"] += comp.cost
+        text = ((comp.message or {}).get("content") or "").strip()
+        self.event("llm", f"asked {choice} ({comp.tokens:,} tok, ${comp.cost:.4f})")
+        head = f"[{choice} · {comp.model} · {comp.tokens:,} tokens · ${comp.cost:.4f}]"
+        if comp.finish_reason == "length":
+            head += " (cut off at max_tokens)"
+        return f"{head}\n{text or '(it returned no text)'}"
+
+    # ── Her machine's HUD: measurements out, hud-control.json in ──
+
+    def hud_payload(self, view: str, now: float) -> dict:
+        """This tick's HUD as data, for the machine to write where she can read it and can't write it."""
+        w, b = self.world, self.budget
+        lines = []
+        for line in view.splitlines():
+            if line.startswith("FOCUS ▸") or (lines and not line.strip()):
+                break
+            lines.append(line)
+        return {
+            "tick": w.tick, "agent": self.config.agent,
+            "at_utc": _iso(now), "at_local": local_dt(now, self.config.timezone).isoformat(timespec="seconds"),
+            "timezone": self.config.timezone,
+            "energy": round(b.energy, 4), "left_today": f"{b.tokens_left:,} tokens left today", "tokens_left": b.tokens_left,
+            "day_resets_in_s": round(b.seconds_until_reset()),
+            "waiting": sum(1 for i in w.items.values() if i.kind in ("message", "task") and not i.resolved),
+            "field_pct": min(999, w.used(now) * 100 // max(1, w.capacity)),
+            "mood": w.mood.get("word"), "focus": w.focus_label(),
+            "pace": {"seconds": self.pace[0], "reason": self.pace[1]} if self.pace else None,
+            "this_tick": {"took_s": self.last_result.get("took"), "tokens": self.last_result.get("tokens"),
+                          "tools": [t["tool"] for t in self.last_result.get("tools", [])]},
+            "control": self.control_ack,   # what the last ~/hud-control.json did (or refused)
+            "hud_lines": lines,
+        }
+
+    def _push_hud(self, view: str, now: float):
+        """Off the event loop and never awaited: a slow box can't hold up a mind."""
+        import threading
+        payload = self.hud_payload(view, now)
+        threading.Thread(target=self.machine.push_hud, args=(payload,), daemon=True).start()
+
+    CONTROL_FILE = "hud-control.json"
+    CONTROL_KEYS = {"seq", "reason", "pace_seconds", "rest_minutes", "note"}
+
+    async def _apply_control(self):
+        """Read ~/hud-control.json from her machine and apply it once per new seq. Her state is hers to
+        steer (pace, rest, a note into her field); the measurements are not."""
+        try:
+            got = await asyncio.to_thread(self.machine.read_file, self.CONTROL_FILE)
+        except Exception:
+            return   # box down or file unreadable: nothing to apply, nothing to say
+        if not got.get("ok"):
+            return
+        try:
+            ctl = json.loads(got.get("content") or "{}")
+            seq = int(ctl.get("seq") or 0)
+        except (ValueError, TypeError, AttributeError):
+            self.control_ack = {"at": _iso(), "error": "~/hud-control.json isn't valid JSON with a numeric seq"}
+            return
+        if not isinstance(ctl, dict) or seq <= self.control_seq:
+            return
+        reason = str(ctl.get("reason") or "from ~/hud-control.json")[:200]
+        applied, refused = [], []
+        try:
+            if "pace_seconds" in ctl:
+                v = ctl["pace_seconds"]
+                granted = self.set_pace(None if v is None else float(v), reason)
+                applied.append(f"pace → {'adaptive' if granted is None else fmt_age(granted)}")
+            if "rest_minutes" in ctl:
+                applied.append(f"rest → {self.request_rest(float(ctl['rest_minutes']), reason):.0f}m after this tick")
+            if str(ctl.get("note") or "").strip():
+                note = " ".join(str(ctl["note"]).split())[:600]
+                self.world.upsert(f"control-note:{seq}", "note", "self", f"you wrote on your machine: {note}",
+                                  salience=0.6, valence=0.05)
+                applied.append("note set into your field")
+        except (ValueError, TypeError) as exc:
+            refused.append(f"bad value: {exc}")
+        refused += [f"unknown key '{k}'" for k in ctl if k not in self.CONTROL_KEYS]
+        self.control_seq = seq
+        self.control_ack = {"seq": seq, "at": _iso(), "applied": applied, "refused": refused}
+        self.event("control", f"~/hud-control.json seq {seq}: " + ("; ".join(applied) or "nothing applied")
+                   + (f" (refused: {'; '.join(refused)})" if refused else ""))
 
     async def _call_tool(self, name: str, args: dict) -> Tuple[str, bool, float]:
         t0 = time.perf_counter()
         with self._stage("act") as p:
             try:
                 seen = False
-                if name in self.tools.handlers:
+                if name == "llm" and name in self.tools.handlers:
+                    out = await self.side_llm(args)
+                elif name in self.tools.handlers:
                     out = self.tools.execute(name, args)
                     seen = name == "workbench" and args.get("action") in ("read", "list", "reflections")
                 elif name in EXCLUDED_TOOLS:

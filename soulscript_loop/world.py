@@ -72,6 +72,15 @@ def _clip(text: str, n: int) -> str:
     return text if len(text) <= n else text[: n - 1] + "…"
 
 
+def local_dt(ts: float, tz_name: str = "UTC") -> datetime:
+    """Wall time in your time zone; UTC if the name is unknown."""
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.fromtimestamp(ts, ZoneInfo(tz_name or "UTC"))
+    except Exception:
+        return datetime.fromtimestamp(ts, timezone.utc)
+
+
 def fmt_age(seconds: float) -> str:
     seconds = max(0, int(seconds))
     if seconds < 90:
@@ -134,6 +143,7 @@ class InnerWorld:
         self.capacity = capacity_chars
         self.capture_threshold = capture_threshold
         self.embedder = embedder
+        self.tz = "UTC"   # set by the daemon: the clock her field is written in
         self.items: Dict[str, Item] = {}
         self.keys: Dict[str, str] = {}
         self.vectors: Dict[str, List[float]] = {}
@@ -410,7 +420,7 @@ class InnerWorld:
         now = now or time.time()
         ex = Expectation(text=text, channel=channel, deadline=now + within_minutes * 60, created=now)
         self.expectations.append(ex)
-        when = datetime.fromtimestamp(ex.deadline, timezone.utc).strftime("%H:%M UTC")
+        when = local_dt(ex.deadline, self.tz).strftime("%H:%M %Z")
         self.upsert(f"expect:{ex.id}", "expectation", "self",
                     f"you expect {text} from {source_name(channel)} by {when}",
                     gist=f"expect: {_clip(text, 40)}", salience=0.55, valence=0.0,
@@ -534,8 +544,8 @@ class InnerWorld:
         return "◆ " if it.held else ("✓ " if it.resolved else "")
 
     def render(self, now: float, header: dict) -> str:
-        dt = datetime.fromtimestamp(now, timezone.utc)
-        lines = [f"FIELD · tick {self.tick} · {dt:%a %d %b %H:%M} UTC, {header.get('part_of_day', '')}".rstrip(", ")]
+        dt = local_dt(now, self.tz)
+        lines = [f"FIELD · tick {self.tick} · {dt:%a %d %b %H:%M %Z}, {header.get('part_of_day', '')}".rstrip(", ")]
 
         hud = []
         t = self.gauge("time")
@@ -549,6 +559,10 @@ class InnerWorld:
         hud.append(f"✉ {waiting} waiting")
         hud.append(f"field {min(999, self.used(now) * 100 // max(1, self.capacity))}% full")
         lines.append(" · ".join(hud))
+        if header.get("clock"):
+            lines.append(header["clock"])
+        if header.get("pace"):
+            lines.append(header["pace"])
         body = self.gauge("proprio")
         if body:
             lines.append(f"✋ {body.text}")
