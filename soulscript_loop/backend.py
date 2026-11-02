@@ -37,11 +37,19 @@ def wire_messages(messages: List[dict], prompt_cache: bool) -> List[dict]:
     return out
 
 
+def accepts_temperature(model: str) -> bool:
+    """Claude and GPT-5 / o-series models reject a temperature (it's deprecated there); the rest take one."""
+    bare = (model or "").lower().rsplit("/", 1)[-1]
+    return not bare.startswith(("claude", "gpt-5", "o1", "o3", "o4"))
+
+
 class OpenAICompatibleBackend:
     """Any ``/chat/completions`` endpoint: OpenAI, OpenRouter, DeepSeek, Ollama, LM Studio, vLLM.
 
     Cost is estimated from token usage and the per-million-token prices
-    you configure (leave at 0 for local models).
+    you configure (leave at 0 for local models). On OpenRouter with no prices
+    configured, it's what OpenRouter says it charged. ``temperature`` is sent
+    only to models that take one (not Claude, GPT-5 or the o-series).
     """
 
     def __init__(
@@ -78,13 +86,16 @@ class OpenAICompatibleBackend:
         payload: Dict[str, Any] = {
             "model": self.model,
             "messages": wire_messages(messages, self.prompt_cache),
-            "temperature": self.temperature,
         }
+        if accepts_temperature(self.model) and self.temperature is not None:
+            payload["temperature"] = self.temperature
         cap = max_tokens or self.max_tokens
         if cap:
             payload["max_tokens"] = cap
         if tools:
             payload["tools"] = tools
+        if "openrouter.ai" in self.url:
+            payload["usage"] = {"include": True}   # the actual charge comes back as usage.cost
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             resp = await client.post(self.url, json=payload, headers=headers)
@@ -98,6 +109,10 @@ class OpenAICompatibleBackend:
             usage.get("prompt_tokens", 0) * self.price_in
             + usage.get("completion_tokens", 0) * self.price_out
         ) / 1_000_000
+        charged = usage.get("cost")   # what OpenRouter actually charged, when it says
+        if isinstance(charged, (int, float)) and not isinstance(charged, bool) and charged >= 0 \
+                and not (self.price_in or self.price_out):
+            cost = float(charged)
         message = choice.get("message") or {}
         tokens = usage.get("total_tokens") or (usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0))
         if not tokens:  # some local servers omit usage; estimate so energy still drains

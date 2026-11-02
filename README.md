@@ -258,7 +258,7 @@ python -m soulscript_loop --config config.example.json --echo --show-field
 python -m soulscript_loop --config config.json --show-field
 ```
 
-While she runs, anything you type lands at her door and wakes her. `/status` shows her vitals and `/stop` ends the loop.
+While she runs, anything you type lands at her door and wakes her. `/status` shows her vitals, `/energy [percent]` gives back some of today's energy (100 = a full day; if she'd run out, she wakes), and `/stop` ends the loop.
 
 **Run the tests:**
 
@@ -403,8 +403,8 @@ The Engine keeps her stable. The Loop gives her continuity of perception on top 
 | `max_rest_minutes` | `240` | Longest rest she can choose |
 | `daily_token_budget` / `daily_cost_cap` | `200000` / `2.00` | Her energy. Whichever runs out first. `0` = no cost cap |
 | `max_tokens_per_tick` | `30000` | One thought can't spend more than this |
-| `max_steps_per_tick` / `max_tool_calls_per_tick` | `4` / `12` | Per-tick limits |
-| `history_window` | `4` | Earlier ticks carried as conversation (the field is the real continuity) |
+| `max_steps_per_tick` / `max_tool_calls_per_tick` | `6` / `8` | Per-tick limits |
+| `history_window` | `2` | Earlier ticks carried as conversation (the field is the real continuity; fewer keeps each tick lean) |
 | `quiet_gate` / `gate_max_skips` | `true` / `3` | Sleep through idle timer wakes with nothing new (no model call), at most this many in a row |
 | `capacity_chars` | `2400` | How much the field holds |
 | `capture_threshold` | `0.45` | Salience needed to pull her focus |
@@ -416,7 +416,7 @@ The Engine keeps her stable. The Loop gives her continuity of perception on top 
 | `machine` | `{"enabled": false}` | Her own Linux: `url`, `token_env` (default `LOOP_MACHINE_TOKEN`), `hud_url` (set it to put her HUD on the box) |
 | `llm` | `{}` | Side models she can call: `models`, `default`, `max_tokens`. Empty = no tool |
 | `sandbox` | `{"enabled": false}` | Docker sandbox for `run_python`: `image`, `timeout_seconds`, `memory`, `cpus`, `pids_limit` |
-| `backend` | — | `type` (`openai` \| `echo`), `base_url`, `model`, `api_key_env`, `temperature`, `max_tokens`, `prompt_cache`, `price_in_per_mtok`, `price_out_per_mtok` |
+| `backend` | — | `type` (`openai` \| `echo`), `base_url`, `model`, `api_key_env`, `temperature` (not sent to Claude, GPT-5 or o-series models, which reject it), `max_tokens`, `prompt_cache`, `price_in_per_mtok`, `price_out_per_mtok` (leave both at 0 on OpenRouter and the cost is what OpenRouter says it charged) |
 
 ---
 

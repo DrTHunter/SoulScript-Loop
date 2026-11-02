@@ -13,9 +13,9 @@
   "daily_cost_cap": 2.00,
   "max_tokens_per_tick": 30000,
 
-  "max_steps_per_tick": 4,
-  "max_tool_calls_per_tick": 12,
-  "history_window": 4,
+  "max_steps_per_tick": 6,
+  "max_tool_calls_per_tick": 8,
+  "history_window": 2,
 
   "quiet_gate": true,
   "gate_max_skips": 3,

@@ -555,6 +555,17 @@ class LoopDaemon:
         self.next_wake_at = None
         self.resting = None
 
+    def refill_energy(self, percent: float) -> tuple:
+        """Top up today's energy by ``percent`` of a full day (100 = full). An exhausted loop wakes.
+        Safe from another thread (the CLI's)."""
+        before = self.budget.energy
+        self.budget.refill(percent / 100.0)
+        after = self.budget.energy
+        self.event("energy", f"energy restored {before:.0%} → {after:.0%}")
+        if self.phase == "exhausted" and after > 0:
+            self._poke("poke")
+        return before, after
+
     def wake_now(self):
         self._poke("poke")
 

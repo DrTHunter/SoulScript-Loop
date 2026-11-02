@@ -1,7 +1,8 @@
 """CLI: python -m soulscript_loop --config config.json
 
 While she runs, anything you type (then Enter) lands at her door and wakes her.
-Type /stop to end the loop, /status to see her vitals.
+Type /stop to end the loop, /status to see her vitals, /energy [percent] to restore her energy
+(100 = a full day; it wakes her if she's run out).
 """
 
 import argparse
@@ -28,6 +29,16 @@ def _read_stdin(loop: asyncio.AbstractEventLoop, daemon):
             s = daemon.status()
             print(json.dumps({k: s[k] for k in ("phase", "tick", "focus_name", "mood", "budget", "waiting")},
                              indent=2, default=str), flush=True)
+            continue
+        if text == "/energy" or text.startswith("/energy "):
+            arg = text[len("/energy"):].strip().rstrip("%") or "100"
+            try:
+                percent = max(0.0, min(100.0, float(arg)))
+            except ValueError:
+                print("usage: /energy [percent of a full day, default 100]", flush=True)
+                continue
+            before, after = daemon.refill_energy(percent)
+            print(f"energy {before:.0%} → {after:.0%}", flush=True)
             continue
         daemon.post_message(text, sender="you")
 
@@ -68,7 +79,7 @@ def main():
 
     config = LoopConfig.from_file(args.config)
     daemon = build_loop(config, backend=EchoBackend() if args.echo else None)
-    print(f"{config.agent} is waking. Type to leave a message at her door; /status, /stop.", flush=True)
+    print(f"{config.agent} is waking. Type to leave a message at her door; /status, /energy, /stop.", flush=True)
 
     loop = asyncio.new_event_loop()
     threading.Thread(target=_read_stdin, args=(loop, daemon), daemon=True).start()

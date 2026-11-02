@@ -29,9 +29,9 @@ class LoopConfig:
     max_tokens_per_tick: int = 30_000
 
     # Per-tick limits
-    max_steps_per_tick: int = 4        # model ↔ tool round trips
-    max_tool_calls_per_tick: int = 12
-    history_window: int = 4            # earlier ticks carried as conversation
+    max_steps_per_tick: int = 6        # model ↔ tool round trips
+    max_tool_calls_per_tick: int = 8
+    history_window: int = 2            # earlier ticks carried as conversation (fewer = a leaner, cheaper tick)
 
     # The quiet gate: a timer wake that finds nothing new after an idle tick is slept through, no model call.
     quiet_gate: bool = True

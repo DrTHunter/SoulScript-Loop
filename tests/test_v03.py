@@ -406,6 +406,90 @@ def test_a_broken_doorbell_is_reported_and_the_answered_seq_survives_a_restart(t
     assert e.wake_reason == "timer"                                             # a box that's down rings nothing
 
 
+def test_temperature_goes_only_to_models_that_take_one():
+    from soulscript_loop.backend import accepts_temperature
+    for m in ("anthropic/claude-opus-5.5", "claude-sonnet-5-5", "openai/gpt-5.6-sol", "o3-mini", "o4"):
+        assert not accepts_temperature(m), m
+    for m in ("deepseek/deepseek-v4-pro", "llama3.1:8b", "google/gemini-3.5-flash", "openai/gpt-4o", ""):
+        assert accepts_temperature(m), m
+
+
+def _fake_post(monkeypatch, reply):
+    """The backend's HTTP call, captured: returns what was sent."""
+    import httpx
+    sent = {}
+
+    class Resp:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return reply
+
+    class Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, json=None, headers=None):
+            sent.update(url=url, payload=json)
+            return Resp()
+
+    monkeypatch.setattr(httpx, "AsyncClient", Client)
+    return sent
+
+
+def test_the_backend_leaves_temperature_out_for_claude_and_reads_openrouters_charge(monkeypatch):
+    from soulscript_loop.backend import OpenAICompatibleBackend
+    reply = {"choices": [{"message": {"role": "assistant", "content": "hi"}}], "model": "m",
+             "usage": {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120, "cost": 0.0042}}
+    sent = _fake_post(monkeypatch, reply)
+    claude = OpenAICompatibleBackend("https://openrouter.ai/api/v1", "anthropic/claude-opus-5.5", temperature=0.7)
+    comp = asyncio.run(claude.complete([{"role": "user", "content": "x"}], []))
+    assert "temperature" not in sent["payload"]                       # Claude rejects it
+    assert sent["payload"]["usage"] == {"include": True}              # OpenRouter is asked what it charged
+    assert comp.cost == 0.0042                                        # …and that's the cost, with no prices set
+    deep = OpenAICompatibleBackend("http://localhost:11434/v1", "llama3.1:8b", temperature=0.4,
+                                   price_in_per_mtok=1.0, price_out_per_mtok=2.0)
+    comp = asyncio.run(deep.complete([{"role": "user", "content": "x"}], []))
+    assert sent["payload"]["temperature"] == 0.4 and "usage" not in sent["payload"]
+    assert comp.cost == (100 * 1.0 + 20 * 2.0) / 1_000_000            # configured prices win
+
+
+def test_energy_refills_from_where_it_is_and_the_spend_stays_on_the_books(tmp_path):
+    from soulscript_loop.budget import DailyBudget
+    b = DailyBudget(tmp_path / "b.json", 1000)
+    b.spend(900, 0.0)
+    assert round(b.energy, 2) == 0.10
+    b.refill(0.5)
+    assert round(b.energy, 2) == 0.60 and b.tokens == 900             # half a day back; spent stays spent
+    b.refill(1.0)
+    assert b.energy == 1.0 and b.tokens_left == 1000                  # capped at full
+    b.spend(250, 0.0)
+    assert round(b.energy, 2) == 0.75 and b.tokens == 1150
+    again = DailyBudget(tmp_path / "b.json", 1000)
+    assert round(again.energy, 2) == 0.75                             # survives a restart
+
+
+def test_restoring_energy_wakes_an_exhausted_loop(tmp_path):
+    d = daemon(tmp_path, daily_token_budget=100)
+    d.budget.spend(100, 0.0)
+    assert d.budget.exhausted
+    d.phase = "exhausted"
+    pokes = []
+    d._poke = pokes.append
+    before, after = d.refill_energy(30)
+    assert before == 0.0 and round(after, 2) == 0.30 and pokes == ["poke"]
+    d.phase = "sleeping"
+    d.refill_energy(10)
+    assert pokes == ["poke"]                                          # a loop that isn't exhausted isn't nudged
+
+
 def test_her_machine_tool_tells_her_about_the_kit_and_the_doorbell():
     from soulscript_loop.machine import MachineTool
     desc = MachineTool.definition()["description"]
