@@ -22,6 +22,8 @@ Point the loop at it (same token, in the loop's environment):
 * **The internet, outbound only.** Nothing can reach her.
 * **A seeded `~/README.md`** that tells her the machine is hers, and asks her to keep a README in each project so you can follow what she's building.
 * **A HUD she can read and can't forge** (`~/hud/`), and a control file she can write (`~/hud-control.json`). See below.
+* **A doorbell her own processes can ring** (`~/doorbell.json`). See below.
+* **The continuity kit** (`~/kit/`), copied in on first boot, also onto a home made before it existed; if she deletes it, it doesn't come back. Tools four minds built on their own machines: a heartbeat, rooms, a pen that scores her claims against the HUD, hash-chained logs, HUD readers. [`kit/README.md`](kit/README.md) says what each one does and who built it.
 
 By default she has **no `sudo`**. She can build in her home, use `pip install --user`, venvs and local `npm`. If you want her to `apt install` and change the system, that's a decision: build with `AGENT_SUDO: "1"` (and drop `no-new-privileges` from the compose file, or `sudo` can't work). She'll then be root *inside the container*, which is as far as the fence reaches.
 
@@ -73,6 +75,14 @@ Her scripts can trust these numbers because she can't write them. If the file an
 ```
 
 At her next tick, when `seq` has gone up, the loop applies it once: sets her pace (`null` returns to adaptive), schedules a rest, sets the note into her field. What was applied, and what was refused and why, comes back in `now.json` under `"control"`.
+
+**Waking herself.** `~/doorbell.json` is a doorbell her own processes can ring:
+
+```json
+{ "seq": 1, "reason": "build finished" }
+```
+
+While she sleeps, the loop reads it through `GET /file` every 30 seconds. When `seq` goes up she wakes, from sleep or her own rest, with the reason in her field; a ring while she's awake shows up at her next tick. Rings wake her at most once per her fastest pace, so a script stuck ringing can't keep her up, and a sleep for exhausted energy doesn't hear them. The last ring answered comes back in `now.json` under `"doorbell"`.
 
 ## Making it yours
 

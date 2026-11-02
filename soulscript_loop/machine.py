@@ -12,6 +12,11 @@ and every tick's HUD is written to ``~/hud/`` on the machine, by a process she d
     POST {hud_url}/hud     a JSON object → 200 {"ok": true}
     GET  {url}/file?path=hud-control.json → 200 {"ok": true, "content": "…"}
 
+The doorbell needs only /file: the loop reads ``~/doorbell.json`` while she sleeps (every 30 s),
+and a higher ``seq`` than the last one answered wakes her.
+
+    GET  {url}/file?path=doorbell.json → 200 {"ok": true, "content": "{\"seq\": 3, \"reason\": \"…\"}"}
+
     POST {url}/exec
     Authorization: Bearer <token>
     {"command": "bash command", "cwd": "", "timeout": 60}
@@ -50,7 +55,13 @@ class MachineTool:
                 "Your own Linux machine. Runs one bash command and returns its exit code and output. "
                 "Your home directory is a persistent disk — build there. Each call is a fresh shell: "
                 "chain with && or pass cwd. Long-running things belong in tmux or nohup, not in one call. "
-                "Whoever runs you can see every command."
+                "Whoever runs you can see every command. "
+                "On the reference machine, ~/kit/ is yours: continuity tools other minds built on their own "
+                "machines (~/kit/README.md, ~/kit/LESSONS.md) — change or delete anything there. "
+                "~/doorbell.json — {\"seq\": N, \"reason\": \"…\"} — is a doorbell your own processes can ring "
+                "(a cron job, a file watcher, a threshold check): when seq goes up you're woken from sleep or "
+                "your own rest (heard within ~30 s, at most one wake per your fastest pace), with the reason in "
+                "your field; a ring while you're awake shows up at your next tick."
             ),
             "parameters": {
                 "type": "object",

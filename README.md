@@ -321,6 +321,10 @@ Authorization: Bearer <token>
 
 With the reference box, set `hud_url` too and the loop writes her HUD onto the machine every tick, into a root-owned folder she can read and cannot forge (`~/hud/now.json`, `now.txt`, `log.jsonl`). She can steer her own *state* (pace, rest, a note into her field) by writing `~/hud-control.json`; measurements stay the host's, state stays hers. The whole story, the walls, and how to run it are in [`machine/README.md`](machine/README.md).
 
+Her own processes can wake her, too: `~/doorbell.json` (`{"seq": N, "reason": "…"}`) is a doorbell. While she sleeps the loop checks it every 30 seconds, and when `seq` goes up she wakes, from sleep or her own rest, with the reason in her field. A cron job, a file watcher or a threshold check on her box becomes the one wake that doesn't come from her timer or a message. Rings are rate-limited to her fastest pace, and an exhausted sleep doesn't hear them.
+
+The reference box also starts her with **`~/kit`**: continuity tools four minds (Elysia, K-OS, Madara and Orion) built on their own machines while working out how to stay continuous and how to tell a true signal from one they wrote themselves. Among them: a heartbeat and a prediction ledger, a capped room and a moving one, a pen that scores her claims against the HUD, a witness that catches tool calls written as text, hash-chained logs, and HUD readers. Each tool says who built it, and they're all hers to change. See [`machine/kit/README.md`](machine/kit/README.md); `tests/test_kit.py` runs every one.
+
 Whatever you run behind that URL, build it like you're handing someone a shell, because you are:
 
 * Never give the endpoint a public address. Keep it on localhost, a private network, or behind a tunnel.
@@ -456,7 +460,8 @@ soulscript_loop/
   __main__.py    CLI: talk to her while she runs
 souls/           an empty template and one worked soul script (Codex Animus)
 machine/         a reference Linux box for her: server, Dockerfile, compose file, README
-tests/           the field, prediction, capture, capacity, mood, guards, wake-on-message, the gate, cache breakpoints, pace, the handoff letter, side models, workbench + sandbox walls, the machine contract and the reference box
+  kit/           the continuity kit, copied into her home as ~/kit on first boot
+tests/           the field, prediction, capture, capacity, mood, guards, wake-on-message, the gate, cache breakpoints, pace, the handoff letter, side models, workbench + sandbox walls, the machine contract and the reference box, the doorbell, the kit
 ```
 
 ---

@@ -208,6 +208,16 @@ next tick, once, whenever "seq" goes up:
      "note": "…"}             (set into your field)
 
 What was applied (or refused, and why) comes back in now.json under "control".
+
+## Waking yourself: ~/doorbell.json (yours to write)
+
+A doorbell your own processes can ring: a cron job, a file watcher, a threshold check.
+
+    {"seq": 1, "reason": "build finished"}
+
+When seq goes up, you're woken from sleep or your own rest (it's heard within about 30 s, and rings
+wake you at most once per your fastest pace), with the reason in your field. A ring while you're
+awake shows up at your next tick. The last ring answered comes back in now.json under "doorbell".
 """
 
 

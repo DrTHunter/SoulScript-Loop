@@ -22,7 +22,9 @@ RUN userdel -r ubuntu 2>/dev/null || true \
 
 COPY server.py start.sh /opt/machine/
 COPY home-README.md /opt/machine/README.md
-RUN chmod +x /opt/machine/start.sh
+# Continuity tools other minds built on their own machines; start.sh copies them into ~/kit once.
+COPY kit /opt/machine/kit
+RUN chmod +x /opt/machine/start.sh && find /opt/machine/kit \( -name '*.sh' -o -name '*.py' \) -exec chmod +x {} +
 
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8080

@@ -202,6 +202,10 @@ class LoopDaemon:
         self.session_prompt_tokens = self.session_cached_tokens = 0
         self.control_seq = int(saved.get("control_seq") or 0)
         self.control_ack: dict = {}
+        self.doorbell_seq = int(saved.get("doorbell_seq") or 0)   # last ~/doorbell.json ring answered
+        self.doorbell_ack: dict = saved.get("doorbell_ack") or {}
+        self._doorbell_woke_at = 0.0   # wall time a ring last woke her (rings are rate-limited)
+        self._rang = False             # a ring was put in her field this tick (the gate lets it through)
         self.machine = None   # set by build_loop when her machine is on: HUD out, hud-control.json in
         self.history: List[dict] = [{"view": t.get("view_head", ""), "response": t.get("response", "")}
                                     for t in self.ticks.tail(config.history_window)]
@@ -234,7 +238,8 @@ class LoopDaemon:
             self._write_json("state.json", {"last_tick_at": self.last_tick_at, "last_result": self.last_result,
                                             "queue": self.queue, "pace": list(self.pace) if self.pace else None,
                                             "gate_on": self.gate_on, "llm_choice": self.llm_choice,
-                                            "handoff_seen": self.handoff_seen, "control_seq": self.control_seq})
+                                            "handoff_seen": self.handoff_seen, "control_seq": self.control_seq,
+                                            "doorbell_seq": self.doorbell_seq, "doorbell_ack": self.doorbell_ack})
         except OSError as exc:
             log.warning("[loop] save failed: %s", exc)
 
@@ -523,13 +528,17 @@ class LoopDaemon:
             self.phase = "resting" if rest_reason else "sleeping"
         slept_from = time.time()
         self.next_wake_at = slept_from + seconds
+        listen = wake_on_message and self.machine is not None   # an exhausted sleep hears no doorbell either
         with self._stage("sleep") as p:
             reason = "timer"
             while self.running and not self.paused:
                 remaining = self.next_wake_at - time.time()
                 if remaining <= 0:
                     break
-                cause = await self._wait(remaining)
+                cause = await self._wait(min(remaining, self.DOORBELL_POLL) if listen else remaining)
+                if cause is None and listen and await self._doorbell_rang():
+                    reason = "doorbell"
+                    break
                 if cause == "message" and wake_on_message:
                     reason = "message"
                     break
@@ -541,6 +550,8 @@ class LoopDaemon:
         self.last_sleep = {"planned": seconds, "slept": time.time() - slept_from, "reason": reason}
         if reason == "message":
             self.event("wake", "a message at the door woke you" + (" from rest" if rest_reason else ""))
+        if reason == "doorbell":
+            self.event("wake", "your machine rang the doorbell" + (" during rest" if rest_reason else ""))
         self.next_wake_at = None
         self.resting = None
 
@@ -553,6 +564,8 @@ class LoopDaemon:
             return "You've just woken up." if not self.last_tick_at else f"You wake again after {fmt_age(gap or 0)} away."
         if r.endswith("message"):
             return "Someone at the door woke you" + (" from your rest." if r.startswith("rest_") else ".")
+        if r.endswith("doorbell"):
+            return "Your own machine rang you awake (~/doorbell.json)" + (" from your rest." if r.startswith("rest_") else ".")
         if r.startswith("rest_"):
             return f"You wake from rest after {fmt_age(gap or 0)}."
         if r == "poke":
@@ -587,6 +600,9 @@ class LoopDaemon:
 
         if self.machine is not None and self.machine.hud_url:
             await self._apply_control()
+        self._rang = False
+        if self.machine is not None:
+            await self._answer_doorbell()
 
         with self._stage("sense") as p:
             new_msgs, self.queue = list(self.queue), []
@@ -771,6 +787,8 @@ class LoopDaemon:
             return ""
         if self.wake_reason not in ("timer", "rest_timer"):
             return "you were woken"
+        if self._rang:
+            return "your machine rang the doorbell"
         if new_msgs or w.surprises or w.pulled:
             return "something new arrived"
         if any(i.kind in ("message", "task") and not i.resolved for i in w.items.values()):
@@ -942,6 +960,7 @@ class LoopDaemon:
             "this_tick": {"took_s": self.last_result.get("took"), "tokens": self.last_result.get("tokens"),
                           "tools": [t["tool"] for t in self.last_result.get("tools", [])]},
             "control": self.control_ack,   # what the last ~/hud-control.json did (or refused)
+            "doorbell": self.doorbell_ack,  # the last ~/doorbell.json ring answered, and whether it woke her
             "hud_lines": lines,
         }
 
@@ -992,6 +1011,54 @@ class LoopDaemon:
         self.control_ack = {"seq": seq, "at": _iso(), "applied": applied, "refused": refused}
         self.event("control", f"~/hud-control.json seq {seq}: " + ("; ".join(applied) or "nothing applied")
                    + (f" (refused: {'; '.join(refused)})" if refused else ""))
+
+    # ── ~/doorbell.json: her own processes can wake her ──
+
+    DOORBELL_FILE = "doorbell.json"
+    DOORBELL_POLL = 30.0   # seconds between listens while she sleeps
+
+    def _read_doorbell(self) -> Optional[Tuple[int, str]]:
+        """(seq, reason) from ~/doorbell.json, or None when there's no readable ring."""
+        try:
+            got = self.machine.read_file(self.DOORBELL_FILE)
+        except Exception:
+            return None   # box down: no ring heard
+        if not got.get("ok"):
+            return None
+        try:
+            ring = json.loads(got.get("content") or "{}")
+            return int(ring.get("seq") or 0), " ".join(str(ring.get("reason") or "").split())[:300]
+        except (ValueError, TypeError, AttributeError):
+            self.doorbell_ack = {"at": _iso(), "error": "~/doorbell.json isn't valid JSON with a numeric seq"}
+            return None
+
+    async def _doorbell_rang(self) -> bool:
+        """Has the seq gone up since the last ring she was shown? At most one wake per her fastest pace —
+        a script stuck ringing can't keep her awake faster than that."""
+        if time.time() - self._doorbell_woke_at < max(self.DOORBELL_POLL, self.config.min_interval_seconds):
+            return False
+        ring = await asyncio.to_thread(self._read_doorbell)
+        if ring and ring[0] > self.doorbell_seq:
+            self._doorbell_woke_at = time.time()
+            return True
+        return False
+
+    async def _answer_doorbell(self):
+        """At the top of a tick: a ring she hasn't been shown goes into her field, with its reason —
+        whether it woke her or arrived while she was already up."""
+        ring = await asyncio.to_thread(self._read_doorbell)
+        if not ring or ring[0] <= self.doorbell_seq:
+            return
+        seq, why = ring
+        woke = self.wake_reason.endswith("doorbell")
+        self.doorbell_seq = seq
+        self.doorbell_ack = {"seq": seq, "at": _iso(), "woke_you": woke}
+        text = (f"your machine rang the doorbell (~/doorbell.json seq {seq})" + (f": {why}" if why else ", with no reason given")
+                + ("" if woke else " — while you were already awake"))
+        self.world.upsert(f"doorbell:{seq}", "note", "machine", text, gist=_clip(f"doorbell: {why or 'rang'}", 48),
+                          salience=0.8, valence=0.0)
+        self._rang = True
+        self.event("doorbell", f"seq {seq}" + (f": {_clip(why, 100)}" if why else ""))
 
     async def _call_tool(self, name: str, args: dict) -> Tuple[str, bool, float]:
         t0 = time.perf_counter()

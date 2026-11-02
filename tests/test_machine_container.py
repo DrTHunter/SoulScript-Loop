@@ -74,6 +74,17 @@ def test_commands_run_as_the_unprivileged_agent(box):
     assert "This machine is yours" in sh(box, "cat ~/README.md")["stdout"]
 
 
+def test_she_starts_with_the_kit_and_its_tools_run_on_the_real_box(box):
+    assert ".kit-seeded" in sh(box, "ls -a ~")["stdout"]
+    assert "continuity tools" in sh(box, "cat ~/kit/README.md")["stdout"]
+    assert sh(box, "stat -c %U ~/kit ~/kit/pen/pen.py")["stdout"].split() == ["agent", "agent"]   # hers to change
+    r = sh(box, "python3 ~/kit/moving-room/test_lock.py")
+    assert r["exit"] == 0 and "4/4 passed" in r["stdout"]                   # the single-writer lock, on Linux
+    beats = " ".join(f"$((now - {s})) {i}" for i, s in enumerate((300, 295, 290, 120, 5)))
+    r = sh(box, f"now=$(date +%s); printf '%s %s\\n' {beats} > ~/kit/gate/heartbeat.log; bash ~/kit/gate/check.sh")
+    assert r["exit"] == 0 and "HEARTBEAT ALIVE" in r["stdout"] and "gap 170s" in r["stdout"], r   # gaps with stock awk
+
+
 def test_she_has_no_sudo_by_default(box):
     assert sh(box, "sudo -n true")["exit"] != 0
 

@@ -322,6 +322,96 @@ def test_hud_payload_is_measurements_and_control_is_applied_once(tmp_path):
     assert payload["hud_lines"][0].startswith("FIELD") and "energy" in payload and payload["control"]["seq"] == 1
 
 
+# ── ~/doorbell.json: her own processes can wake her ────────────
+
+class Box:
+    """Her machine, by file: read_file answers what's in ``files``."""
+    hud_url = ""
+
+    def __init__(self, files=None):
+        self.files = files or {}
+
+    def read_file(self, path):
+        return {"ok": True, "content": self.files[path]} if path in self.files else {"ok": False, "reason": "no such file"}
+
+    def push_hud(self, payload):
+        pass
+
+
+def nap(d, *args, **kw):
+    """One sleep. Each asyncio.run is a new event loop, and the wake event binds to one."""
+    d._wake = asyncio.Event()
+    asyncio.run(d._sleep(*args, **kw))
+
+
+def test_a_ring_wakes_her_from_sleep_and_reaches_her_field(tmp_path):
+    d = daemon(tmp_path, quiet_gate=True, min_interval_seconds=20)
+    d.machine, d.running, d.DOORBELL_POLL = Box(), True, 0.05
+    nap(d, 0.3)
+    assert d.wake_reason == "timer" and d.last_sleep["slept"] >= 0.29          # no doorbell file: a full sleep
+    d.machine.files["doorbell.json"] = json.dumps({"seq": 1, "reason": "build   finished"})
+    t0 = time.time()
+    nap(d, 30)
+    assert d.wake_reason == "doorbell" and time.time() - t0 < 2                 # heard within a listen
+    tick(d)
+    item = d.world.get("doorbell:1")
+    assert item and item.text == "your machine rang the doorbell (~/doorbell.json seq 1): build finished"
+    entry = d.ticks.tail(1)[0]
+    assert not entry.get("gated") and "Your own machine rang you awake" in entry["view"]
+    assert d.doorbell_seq == 1 and d.doorbell_ack["woke_you"] is True
+
+
+def test_rings_are_answered_once_rate_limited_and_never_while_exhausted(tmp_path):
+    d = daemon(tmp_path, quiet_gate=True, min_interval_seconds=20)
+    d.machine, d.running, d.DOORBELL_POLL = Box({"doorbell.json": json.dumps({"seq": 1})}), True, 0.05
+    tick(d)                                                                     # answered at the top of a tick
+    d._doorbell_woke_at = 0
+    nap(d, 0.3)
+    assert d.wake_reason == "timer"                                             # an answered ring doesn't wake again
+    d.machine.files["doorbell.json"] = json.dumps({"seq": 2, "reason": "again"})
+    d._doorbell_woke_at = time.time()
+    nap(d, 0.3)
+    assert d.wake_reason == "timer"                                             # at most one wake per her fastest pace
+    tick(d)
+    assert "while you were already awake" in d.world.get("doorbell:2").text     # …but the ring still reaches her
+    assert not d.ticks.tail(1)[0].get("gated")                                  # and the quiet gate lets it through
+    d.machine.files["doorbell.json"] = json.dumps({"seq": 3})
+    d._doorbell_woke_at = 0
+    nap(d, 30, rest_reason="tired")
+    assert d.wake_reason == "rest_doorbell"                                     # it wakes her from her own rest
+    d.machine.files["doorbell.json"] = json.dumps({"seq": 4})
+    d._doorbell_woke_at = 0
+    nap(d, 0.3, wake_on_message=False)
+    assert d.wake_reason == "timer"                                             # an exhausted sleep hears nothing
+
+
+def test_a_broken_doorbell_is_reported_and_the_answered_seq_survives_a_restart(tmp_path):
+    d = daemon(tmp_path, quiet_gate=False)
+    d.machine = Box({"doorbell.json": json.dumps({"seq": 5, "reason": "x"})})
+    tick(d)
+    d.machine.files["doorbell.json"] = "{nope"
+    tick(d)
+    assert "isn't valid JSON" in d.doorbell_ack.get("error", "") and d.doorbell_seq == 5
+    assert "doorbell" in d.hud_payload("", time.time())
+    d.save()
+    assert daemon(tmp_path).doorbell_seq == 5
+
+    class Down(Box):
+        def read_file(self, path):
+            raise OSError("unreachable")
+
+    e = daemon(tmp_path / "down")
+    e.machine, e.running, e.DOORBELL_POLL = Down(), True, 0.05
+    nap(e, 0.3)
+    assert e.wake_reason == "timer"                                             # a box that's down rings nothing
+
+
+def test_her_machine_tool_tells_her_about_the_kit_and_the_doorbell():
+    from soulscript_loop.machine import MachineTool
+    desc = MachineTool.definition()["description"]
+    assert "~/kit/" in desc and "~/doorbell.json" in desc
+
+
 # ── the shipped configs ────────────────────────────────────────
 
 ROOT = Path(__file__).parent.parent

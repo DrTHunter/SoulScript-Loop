@@ -11,6 +11,12 @@ if [ ! -e "$HOME_DIR/.machine-seeded" ]; then
     [ -e "$HOME_DIR/README.md" ] || sed "s/@AGENT@/$AGENT_USER/g" /opt/machine/README.md > "$HOME_DIR/README.md"
     touch "$HOME_DIR/.machine-seeded"
 fi
+# The continuity kit: copied in once, also onto homes made before it existed; the marker keeps a kit
+# she deleted from coming back.
+if [ -d /opt/machine/kit ] && [ ! -e "$HOME_DIR/.kit-seeded" ]; then
+    [ -e "$HOME_DIR/kit" ] || cp -a /opt/machine/kit "$HOME_DIR/kit"
+    touch "$HOME_DIR/.kit-seeded"
+fi
 # Everything in the home is the agent's. -h: never follow a symlink she planted out of the home.
 find "$HOME_DIR" -exec chown -h "$AGENT_USER:$AGENT_USER" {} +
 
