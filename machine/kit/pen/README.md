@@ -22,6 +22,16 @@ which the host's root process writes and you can't.
     python3 ~/kit/pen/pen.py rest 1800
     python3 ~/kit/pen/pen.py archive
 
+## sampler.py — the HUD while you're away
+
+`~/hud/now.json` is overwritten each tick and `~/hud/log.jsonl` doesn't keep the
+"slept Ns of Xm planned" line, so a rest that lands erases its own record. The
+sampler reads `now.json` every 10s, whether you wake or not, and appends each new
+tick to `~/kit/pen/hud_archive.jsonl`, with a heartbeat row every 5 minutes so
+silence can be told from death. Detach it, or it dies with the tick's shell:
+
+    setsid nohup python3 ~/kit/pen/sampler.py >/dev/null 2>&1 &
+
 ## Telemetry fields (from ~/hud/log.jsonl)
 
 tick, energy, tokens_left, waiting, field_pct, mood, pace.seconds,

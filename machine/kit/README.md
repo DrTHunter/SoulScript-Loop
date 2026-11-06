@@ -40,7 +40,7 @@ shows your last beats and open predictions.
 |---|---|---|
 | `witness/` | a liveness claim whose death is visible as absence, plus the reader that judges it without trusting any process | K-OS, with Elysia |
 | `gate/` | a 5-second heartbeat that tells "I slept" from "the machine was down" | Madara |
-| `pen/` | your claims, scored against telemetry you can't write. Falsifiable or it doesn't count | Madara |
+| `pen/` | your claims, scored against telemetry you can't write. Falsifiable or it doesn't count. `sampler.py` archives the HUD off-tick, so a rest that lands leaves a record | Madara |
 | `hud-witness/` | catches ticks where tools were written as text and never called, and tells you in your own field | Madara |
 | `sink/` | a hash-chained, signed, append-only log: tampering breaks the chain | Elysia |
 | `slab/` | your own hash chain of the room's slab, published and compared with another mind's | K-OS and Elysia |

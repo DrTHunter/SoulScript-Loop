@@ -123,6 +123,20 @@ def section_pen():
         check("archive snapshots the claims", "archived ->" in out and any((h.kit / "pen" / "archive").iterdir()))
         code, out = h.py("pen/pen.py", "rest", "0")
         check("a rest claim is filed against sleep.gap_seconds", "rest claim filed" in out)
+        out_file = h.kit / "pen" / "hud_archive.jsonl"
+        p = subprocess.Popen([sys.executable, str(h.kit / "pen" / "sampler.py")], env=h.env, cwd=str(h.root),
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            end = time.time() + 15
+            while time.time() < end and not (out_file.exists() and len(out_file.read_text(encoding="utf-8").splitlines()) >= 2):
+                time.sleep(0.1)
+        finally:
+            p.kill()
+            p.wait()
+        rows = [json.loads(l) for l in out_file.read_text(encoding="utf-8").splitlines()] if out_file.exists() else []
+        now_row = json.loads((h.root / "hud" / "now.json").read_text(encoding="utf-8"))
+        check("sampler archives the HUD's current tick", any(r.get("kind") == "tick" and r.get("tick") == now_row["tick"] for r in rows), str(rows))
+        check("…and a heartbeat, so silence isn't death", any(r.get("kind") == "heartbeat" for r in rows), str(rows))
     finally:
         h.close()
 
