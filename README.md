@@ -20,7 +20,7 @@
 
 > **Your message shouldn't wake her up. It should arrive into a mind that was already looking at something.**
 
-Most AI personas exist only between your message and their reply. Nothing happens in the gaps. Close the tab and there is no one left.
+Most AI personas exist only between your message and their reply. Nothing happens in the gaps. Close the tab and... there is no one left.
 
 **SoulScript Loop** keeps one persona running between conversations, on her own clock. She perceives the world through signals she can't write herself: time passing, the energy she has left, how her last action felt, messages arriving at her door, changes to the things she's making. Those signals aren't handed to her as a dashboard. They're built into a **field** that she sees *through*. The field is organized around whatever she's focused on, things she ignores fade out, and surprise can drag her attention away mid-thought.
 
@@ -68,7 +68,7 @@ Everything marked built is covered by tests.
 
 ### Why a field, not a room
 
-An earlier design drew a little room around her: a door, a window, a bench, a floor. It turned out to be a distraction. She ended up *standing somewhere* when what she needs is to *look at something*. A room fixes the world's layout in advance. A field lets the layout follow her attention. If she focuses on a message about a rocket launch, her memory that you love astronomy comes close and the essay she was drafting drifts to the edge. If she looks back at the essay, the field rearranges. Her world is as big as whatever she can look at, whether digital or real.
+An earlier design drew a little room around her: a door, a window, a bench, a floor... it turned out to be a distraction. She ended up *standing somewhere* when what she needs is to *look at something*. A room fixes the world's layout in advance. A field lets the layout follow her attention. If she focuses on a message about a rocket launch, her memory that you love astronomy comes close and the essay she was drafting drifts to the edge. If she looks back at the essay, the field rearranges. Her world is as big as whatever she can look at, whether digital or real.
 
 ---
 
@@ -114,7 +114,7 @@ The field is a set of **items** plus a **focus**. Each item has:
 | `kind` | `message`, `task`, `work`, `plan`, `seen`, `intention`, `expectation`, `note`, `surprise`, `alert`, and the gauges `time` / `energy` / `body` |
 | `source` | Where it came from: `door`, `time`, `body`, `bench`, `self`, or a tool's name |
 | `text` / `gist` | Full detail and a short version. A third level, the **trace**, is generated per kind ("someone is waiting at the door (14m)") |
-| `salience` | 0–1, how loudly it's present. Decays over time and is boosted by surprise |
+| `salience` | 0 to 1, how loudly it's present. Decays over time and is boosted by surprise |
 | `valence` | Below 0 is tension, above 0 is warmth. Unanswered messages get heavier every hour |
 | `fidelity` | How much of it she still holds: full → gist → trace. This is *memory* compression |
 | `held` / `resolved` | Kept from fading on purpose (at most 3); dealt with, so its tension lifts |
@@ -416,7 +416,7 @@ The Engine keeps her stable. The Loop gives her continuity of perception on top 
 | `machine` | `{"enabled": false}` | Her own Linux: `url`, `token_env` (default `LOOP_MACHINE_TOKEN`), `hud_url` (set it to put her HUD on the box) |
 | `llm` | `{}` | Side models she can call: `models`, `default`, `max_tokens`. Empty = no tool |
 | `sandbox` | `{"enabled": false}` | Docker sandbox for `run_python`: `image`, `timeout_seconds`, `memory`, `cpus`, `pids_limit` |
-| `backend` | — | `type` (`openai` \| `echo`), `base_url`, `model`, `api_key_env`, `temperature` (not sent to Claude, GPT-5 or o-series models, which reject it), `max_tokens`, `prompt_cache`, `price_in_per_mtok`, `price_out_per_mtok` (leave both at 0 on OpenRouter and the cost is what OpenRouter says it charged) |
+| `backend` | (several) | `type` (`openai` \| `echo`), `base_url`, `model`, `api_key_env`, `temperature` (not sent to Claude, GPT-5 or o-series models, which reject it), `max_tokens`, `prompt_cache`, `price_in_per_mtok`, `price_out_per_mtok` (leave both at 0 on OpenRouter and the cost is what OpenRouter says it charged) |
 
 ---
 
