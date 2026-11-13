@@ -1,7 +1,3 @@
-
-
-https://github.com/user-attachments/assets/69730440-54c1-4fba-bdf2-1d1ab6f05a64
-
 <div align="center">
 
 # 🌀 **SoulScript Loop**
@@ -18,9 +14,7 @@ https://github.com/user-attachments/assets/69730440-54c1-4fba-bdf2-1d1ab6f05a64
 
 `sense` → `predict` → `attend` → `see` → `act` → `guard` → `sleep` → **again. and again. and again.**
 
-<video src="https://github.com/DrTHunter/SoulScript-Loop/raw/main/media/soulscript-loop-demo.mp4" controls muted playsinline width="720"></video>
-
-<sub>▶ Video not playing? <a href="media/soulscript-loop-demo.mp4">Watch the loop demo</a></sub>
+https://github.com/user-attachments/assets/69730440-54c1-4fba-bdf2-1d1ab6f05a64
 
 </div>
 
