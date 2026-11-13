@@ -14,8 +14,6 @@
 
 `sense` → `predict` → `attend` → `see` → `act` → `guard` → `sleep` → **again. and again. and again.**
 
-https://github.com/user-attachments/assets/69730440-54c1-4fba-bdf2-1d1ab6f05a64
-
 https://github.com/user-attachments/assets/9f551e9f-d311-4048-bde7-1bbe03b50472
 
 
